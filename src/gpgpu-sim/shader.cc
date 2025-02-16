@@ -1264,6 +1264,7 @@ void scheduler_unit::cycle() {
   bool ready_inst = false;   // of the valid instructions, there was one not
                              // waiting for pending register writes
   bool issued_inst = false;  // of these we issued one
+  unsigned core_id = this->m_shader->get_sid();
 
   order_warps();
   for (std::vector<shd_warp_t *>::const_iterator iter =
@@ -1351,6 +1352,7 @@ void scheduler_unit::cycle() {
                    previous_issued_inst_exec_type != exec_unit_type_t::MEM)) {
                 m_shader->issue_warp(*m_mem_out, pI, active_mask, warp_id,
                                      m_id);
+                fprintf(stdout, "warp_id=%d, core_id=%d, active_mask=%s\n", warp_id,core_id, active_mask.to_string().c_str());
                 issued++;
                 issued_inst = true;
                 warp_inst_issued = true;
@@ -1416,6 +1418,7 @@ void scheduler_unit::cycle() {
                 if (execute_on_SP) {
                   m_shader->issue_warp(*m_sp_out, pI, active_mask, warp_id,
                                        m_id);
+                  fprintf(stdout, "warp_id=%d, core_id=%d, active_mask=%s\n", warp_id,core_id, active_mask.to_string().c_str());
                   issued++;
                   issued_inst = true;
                   warp_inst_issued = true;
@@ -1423,6 +1426,7 @@ void scheduler_unit::cycle() {
                 } else if (execute_on_INT) {
                   m_shader->issue_warp(*m_int_out, pI, active_mask, warp_id,
                                        m_id);
+                  fprintf(stdout, "warp_id=%d, core_id=%d, active_mask=%s\n", warp_id,core_id, active_mask.to_string().c_str());
                   issued++;
                   issued_inst = true;
                   warp_inst_issued = true;
@@ -1440,6 +1444,7 @@ void scheduler_unit::cycle() {
                 if (dp_pipe_avail) {
                   m_shader->issue_warp(*m_dp_out, pI, active_mask, warp_id,
                                        m_id);
+                  fprintf(stdout, "warp_id=%d, core_id=%d, active_mask=%s\n", warp_id,core_id, active_mask.to_string().c_str());
                   issued++;
                   issued_inst = true;
                   warp_inst_issued = true;
@@ -1460,6 +1465,7 @@ void scheduler_unit::cycle() {
                 if (sfu_pipe_avail) {
                   m_shader->issue_warp(*m_sfu_out, pI, active_mask, warp_id,
                                        m_id);
+                  fprintf(stdout, "warp_id=%d, core_id=%d, active_mask=%s\n", warp_id,core_id, active_mask.to_string().c_str());
                   issued++;
                   issued_inst = true;
                   warp_inst_issued = true;
@@ -1476,6 +1482,7 @@ void scheduler_unit::cycle() {
                 if (tensor_core_pipe_avail) {
                   m_shader->issue_warp(*m_tensor_core_out, pI, active_mask,
                                        warp_id, m_id);
+                  fprintf(stdout, "warp_id=%d, core_id=%d, active_mask=%s\n", warp_id,core_id, active_mask.to_string().c_str());
                   issued++;
                   issued_inst = true;
                   warp_inst_issued = true;
@@ -1497,6 +1504,7 @@ void scheduler_unit::cycle() {
                 if (spec_pipe_avail) {
                   m_shader->issue_warp(*spec_reg_set, pI, active_mask, warp_id,
                                        m_id);
+                  fprintf(stdout, "warp_id=%d, core_id=%d, active_mask=%s\n", warp_id,core_id, active_mask.to_string().c_str());
                   issued++;
                   issued_inst = true;
                   warp_inst_issued = true;
@@ -3446,51 +3454,51 @@ void shader_core_ctx::display_pipeline(FILE *fout, int print_mem,
   }
   fprintf(fout, "\n");
   display_simt_state(fout, mask);
-  fprintf(fout, "-------------------------- Scoreboard\n");
-  m_scoreboard->printContents();
-  /*
-     fprintf(fout,"ID/OC (SP)  = ");
-     print_stage(ID_OC_SP, fout);
-     fprintf(fout,"ID/OC (SFU) = ");
-     print_stage(ID_OC_SFU, fout);
-     fprintf(fout,"ID/OC (MEM) = ");
-     print_stage(ID_OC_MEM, fout);
-  */
-  fprintf(fout, "-------------------------- OP COL\n");
-  m_operand_collector.dump(fout);
-  /* fprintf(fout, "OC/EX (SP)  = ");
-     print_stage(OC_EX_SP, fout);
-     fprintf(fout, "OC/EX (SFU) = ");
-     print_stage(OC_EX_SFU, fout);
-     fprintf(fout, "OC/EX (MEM) = ");
-     print_stage(OC_EX_MEM, fout);
-  */
-  fprintf(fout, "-------------------------- Pipe Regs\n");
+  // fprintf(fout, "-------------------------- Scoreboard\n");
+  // m_scoreboard->printContents();
+  // /*
+  //    fprintf(fout,"ID/OC (SP)  = ");
+  //    print_stage(ID_OC_SP, fout);
+  //    fprintf(fout,"ID/OC (SFU) = ");
+  //    print_stage(ID_OC_SFU, fout);
+  //    fprintf(fout,"ID/OC (MEM) = ");
+  //    print_stage(ID_OC_MEM, fout);
+  // */
+  // fprintf(fout, "-------------------------- OP COL\n");
+  // m_operand_collector.dump(fout);
+  // /* fprintf(fout, "OC/EX (SP)  = ");
+  //    print_stage(OC_EX_SP, fout);
+  //    fprintf(fout, "OC/EX (SFU) = ");
+  //    print_stage(OC_EX_SFU, fout);
+  //    fprintf(fout, "OC/EX (MEM) = ");
+  //    print_stage(OC_EX_MEM, fout);
+  // */
+  // fprintf(fout, "-------------------------- Pipe Regs\n");
 
-  for (unsigned i = 0; i < N_PIPELINE_STAGES; i++) {
-    fprintf(fout, "--- %s ---\n", pipeline_stage_name_decode[i]);
-    print_stage(i, fout);
-    fprintf(fout, "\n");
-  }
+  // for (unsigned i = 0; i < N_PIPELINE_STAGES; i++) {
+  //   fprintf(fout, "--- %s ---\n", pipeline_stage_name_decode[i]);
+  //   print_stage(i, fout);
+  //   fprintf(fout, "\n");
+  // }
 
-  fprintf(fout, "-------------------------- Fu\n");
-  for (unsigned n = 0; n < m_num_function_units; n++) {
-    m_fu[n]->print(fout);
-    fprintf(fout, "---------------\n");
-  }
-  fprintf(fout, "-------------------------- other:\n");
+  // fprintf(fout, "-------------------------- Fu\n");
+  // for (unsigned n = 0; n < m_num_function_units; n++) {
+  //   m_fu[n]->print(fout);
+  //   fprintf(fout, "---------------\n");
+  // }
+  // fprintf(fout, "-------------------------- other:\n");
 
-  for (unsigned i = 0; i < num_result_bus; i++) {
-    std::string bits = m_result_bus[i]->to_string();
-    fprintf(fout, "EX/WB sched[%d]= %s\n", i, bits.c_str());
-  }
-  fprintf(fout, "EX/WB      = ");
-  print_stage(EX_WB, fout);
-  fprintf(fout, "\n");
-  fprintf(
-      fout,
-      "Last EX/WB writeback @ %llu + %llu (gpu_sim_cycle+gpu_tot_sim_cycle)\n",
-      m_last_inst_gpu_sim_cycle, m_last_inst_gpu_tot_sim_cycle);
+  // for (unsigned i = 0; i < num_result_bus; i++) {
+  //   std::string bits = m_result_bus[i]->to_string();
+  //   fprintf(fout, "EX/WB sched[%d]= %s\n", i, bits.c_str());
+  // }
+  // fprintf(fout, "EX/WB      = ");
+  // print_stage(EX_WB, fout);
+  // fprintf(fout, "\n");
+  // fprintf(
+  //     fout,
+  //     "Last EX/WB writeback @ %llu + %llu (gpu_sim_cycle+gpu_tot_sim_cycle)\n",
+  //     m_last_inst_gpu_sim_cycle, m_last_inst_gpu_tot_sim_cycle);
 
   if (m_active_threads.count() <= 2 * m_config->warp_size) {
     fprintf(fout, "Active Threads : ");
