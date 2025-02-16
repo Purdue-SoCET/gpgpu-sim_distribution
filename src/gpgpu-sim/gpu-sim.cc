@@ -2207,7 +2207,7 @@ void gpgpu_sim::cycle() {
     gpgpu_ctx->device_runtime->launch_one_device_kernel();
 #endif
   }
-  dump_pipeline((0x40|0x4|0x1),0,0);
+  // dump_pipeline((0x40|0x4|0x1),0,0);
 }
 
 void sst_gpgpu_sim::cycle() {
