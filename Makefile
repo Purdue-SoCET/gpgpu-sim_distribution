@@ -259,8 +259,8 @@ cleandocs:
 
 clean: makedirs
 	$(MAKE) cleangpgpusim
-	@chmod +x setup_environment
-	@./setup_environment release
+	# @chmod +x setup_environment
+	# @./setup_environment release
 
 cleangpgpusim: cleandocs
 	rm -rf $(SIM_LIB_DIR)

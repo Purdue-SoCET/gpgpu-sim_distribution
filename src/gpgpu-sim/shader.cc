@@ -257,9 +257,10 @@ void shader_core_ctx::create_schedulers() {
         abort();
     };
   }
-  fprintf(stdout, "Number of Warps per shader core: %d\n", m_warp.size());
+  // fprintf(stdout, "Number of Warps per shader core: %d\n", schedulers[0].m_next_cycle_prioritized_warps.size());
   for (unsigned i = 0; i < m_warp.size(); i++) {
     // distribute i's evenly though schedulers;
+    // fprintf(stdout, "Warp %d added to scheduler %d\n", i, i%m_config->gpgpu_num_sched_per_core);
     schedulers[i % m_config->gpgpu_num_sched_per_core]->add_supervised_warp_id(
         i);
   }
@@ -1257,6 +1258,7 @@ void scheduler_unit::order_by_priority(
 }
 
 void scheduler_unit::cycle() {
+  fprintf(stdout, "Number of Warps per shader core based on scheduler: %d\n", m_next_cycle_prioritized_warps.size());
   SCHED_DPRINTF("scheduler_unit::cycle()\n");
   bool valid_inst =
       false;  // there was one warp with a valid instruction to issue (didn't
