@@ -3,7 +3,7 @@ self exe links to: /home/ecegridfs/a/socet177/gpgpu-sim_distribution/test/mmul/m
 11.0
 
 
-        *** GPGPU-Sim Simulator Version 4.2.0  [build gpgpu-sim_git-commit-89b321d_modified_2.0] ***
+        *** GPGPU-Sim Simulator Version 4.2.0  [build gpgpu-sim_git-commit-f6bcaf4_modified_4.0] ***
 
 
 GPGPU-Sim PTX: simulation mode 1769108595 (can change with PTX_SIM_MODE_FUNC environment variable:
@@ -73,8 +73,8 @@ GPGPU-Sim: Configuration options:
 -gpgpu_ignore_resources_limitation                    0 # gpgpu_ignore_resources_limitation (default 0)
 -gpgpu_shader_cta                      32 # Maximum number of concurrent CTAs in shader (default 32)
 -gpgpu_num_cta_barriers                   16 # Maximum number of named barriers per CTA (default 16)
--gpgpu_n_clusters                      40 # number of processing clusters
--gpgpu_n_cores_per_cluster                    2 # number of simd cores per cluster
+-gpgpu_n_clusters                       1 # number of processing clusters
+-gpgpu_n_cores_per_cluster                    1 # number of simd cores per cluster
 -gpgpu_n_cluster_ejection_buffer_size                   32 # number of packets in ejection buffer
 -gpgpu_n_ldst_response_buffer_size                    2 # number of response packets in ld/st unit ejection buffer
 -gpgpu_shmem_per_block                65536 # Size of shared memory per thread block or CTA (default 48kB)
@@ -264,12 +264,14 @@ GPGPU-Sim uArch: clock freqs: 1200000000.000000:1200000000.000000:1200000000.000
 GPGPU-Sim uArch: clock periods: 0.00000000083333333333:0.00000000083333333333:0.00000000083333333333:0.00000000117647058824
 *** Initializing Memory Statistics ***
 GPGPU-Sim uArch: performance model initialization complete.
+Number of shader cores being initialized: 1
+Number of Warps per shader core: 64
 GPGPU-Sim PTX: __cudaRegisterFatBinary, fat_cubin_handle = 1, filename=default
 self exe links to: /home/ecegridfs/a/socet177/gpgpu-sim_distribution/test/mmul/mmul
 Running md5sum using "md5sum /home/ecegridfs/a/socet177/gpgpu-sim_distribution/test/mmul/mmul "
 self exe links to: /home/ecegridfs/a/socet177/gpgpu-sim_distribution/test/mmul/mmul
 Extracting specific PTX file named mmul.1.sm_52.ptx 
-GPGPU-Sim PTX: __cudaRegisterFunction _Z9matrixMulPKiS0_Pii : hostFun 0x0x56375e267b50, fat_cubin_handle = 1
+GPGPU-Sim PTX: __cudaRegisterFunction _Z9matrixMulPKiS0_Pii : hostFun 0x0x55c679e37b50, fat_cubin_handle = 1
 GPGPU-Sim PTX: Parsing mmul.1.sm_52.ptx
 GPGPU-Sim PTX: Warning -- ignoring pragma 'nounroll'
 GPGPU-Sim PTX: instruction assembly for function '_Z9matrixMulPKiS0_Pii'...   done.
@@ -279,12 +281,12 @@ GPGPU-Sim PTX: finished loading globals (0 bytes total).
 GPGPU-Sim PTX: loading constants with explicit initializers...  done.
 GPGPU-Sim PTX: Loading PTXInfo from mmul.1.sm_52.ptx
 GPGPU-Sim PTX: Kernel '_Z9matrixMulPKiS0_Pii' : regs=23, lmem=0, smem=0, cmem=348
-GPGPU-Sim PTX: Setting up arguments for 8 bytes starting at 0x7ffc5bd50148..
-GPGPU-Sim PTX: Setting up arguments for 8 bytes starting at 0x7ffc5bd50140..
-GPGPU-Sim PTX: Setting up arguments for 8 bytes starting at 0x7ffc5bd50138..
-GPGPU-Sim PTX: Setting up arguments for 4 bytes starting at 0x7ffc5bd50134..
+GPGPU-Sim PTX: Setting up arguments for 8 bytes starting at 0x7ffd7d2539f8..
+GPGPU-Sim PTX: Setting up arguments for 8 bytes starting at 0x7ffd7d2539f0..
+GPGPU-Sim PTX: Setting up arguments for 8 bytes starting at 0x7ffd7d2539e8..
+GPGPU-Sim PTX: Setting up arguments for 4 bytes starting at 0x7ffd7d2539e4..
 
-GPGPU-Sim PTX: cudaLaunch for 0x0x56375e267b50 (mode=performance simulation) on stream 0
+GPGPU-Sim PTX: cudaLaunch for 0x0x55c679e37b50 (mode=performance simulation) on stream 0
 GPGPU-Sim PTX: finding reconvergence points for '_Z9matrixMulPKiS0_Pii'...
 GPGPU-Sim PTX: Finding dominators for '_Z9matrixMulPKiS0_Pii'...
 GPGPU-Sim PTX: Finding immediate dominators for '_Z9matrixMulPKiS0_Pii'...
@@ -7978,7 +7980,7 @@ partiton_level_parallism_util =       1.0000
 partiton_level_parallism_util_total  =       1.0000
 L2_BW  =      14.5260 GB/Sec
 L2_BW_total  =      14.5260 GB/Sec
-gpu_total_sim_rate=80554
+gpu_total_sim_rate=120832
 
 ========= Core cache stats =========
 L1I_cache:
@@ -7988,45 +7990,6 @@ L1I_cache:
 	L1I_total_cache_reservation_fails = 0
 L1D_cache:
 	L1D_cache_core[0]: Access = 9344, Miss = 384, Miss_rate = 0.041, Pending_hits = 896, Reservation_fails = 17879
-	L1D_cache_core[1]: Access = 0, Miss = 0, Miss_rate = -nan, Pending_hits = 0, Reservation_fails = 0
-	L1D_cache_core[2]: Access = 0, Miss = 0, Miss_rate = -nan, Pending_hits = 0, Reservation_fails = 0
-	L1D_cache_core[3]: Access = 0, Miss = 0, Miss_rate = -nan, Pending_hits = 0, Reservation_fails = 0
-	L1D_cache_core[4]: Access = 0, Miss = 0, Miss_rate = -nan, Pending_hits = 0, Reservation_fails = 0
-	L1D_cache_core[5]: Access = 0, Miss = 0, Miss_rate = -nan, Pending_hits = 0, Reservation_fails = 0
-	L1D_cache_core[6]: Access = 0, Miss = 0, Miss_rate = -nan, Pending_hits = 0, Reservation_fails = 0
-	L1D_cache_core[7]: Access = 0, Miss = 0, Miss_rate = -nan, Pending_hits = 0, Reservation_fails = 0
-	L1D_cache_core[8]: Access = 0, Miss = 0, Miss_rate = -nan, Pending_hits = 0, Reservation_fails = 0
-	L1D_cache_core[9]: Access = 0, Miss = 0, Miss_rate = -nan, Pending_hits = 0, Reservation_fails = 0
-	L1D_cache_core[10]: Access = 0, Miss = 0, Miss_rate = -nan, Pending_hits = 0, Reservation_fails = 0
-	L1D_cache_core[11]: Access = 0, Miss = 0, Miss_rate = -nan, Pending_hits = 0, Reservation_fails = 0
-	L1D_cache_core[12]: Access = 0, Miss = 0, Miss_rate = -nan, Pending_hits = 0, Reservation_fails = 0
-	L1D_cache_core[13]: Access = 0, Miss = 0, Miss_rate = -nan, Pending_hits = 0, Reservation_fails = 0
-	L1D_cache_core[14]: Access = 0, Miss = 0, Miss_rate = -nan, Pending_hits = 0, Reservation_fails = 0
-	L1D_cache_core[15]: Access = 0, Miss = 0, Miss_rate = -nan, Pending_hits = 0, Reservation_fails = 0
-	L1D_cache_core[16]: Access = 0, Miss = 0, Miss_rate = -nan, Pending_hits = 0, Reservation_fails = 0
-	L1D_cache_core[17]: Access = 0, Miss = 0, Miss_rate = -nan, Pending_hits = 0, Reservation_fails = 0
-	L1D_cache_core[18]: Access = 0, Miss = 0, Miss_rate = -nan, Pending_hits = 0, Reservation_fails = 0
-	L1D_cache_core[19]: Access = 0, Miss = 0, Miss_rate = -nan, Pending_hits = 0, Reservation_fails = 0
-	L1D_cache_core[20]: Access = 0, Miss = 0, Miss_rate = -nan, Pending_hits = 0, Reservation_fails = 0
-	L1D_cache_core[21]: Access = 0, Miss = 0, Miss_rate = -nan, Pending_hits = 0, Reservation_fails = 0
-	L1D_cache_core[22]: Access = 0, Miss = 0, Miss_rate = -nan, Pending_hits = 0, Reservation_fails = 0
-	L1D_cache_core[23]: Access = 0, Miss = 0, Miss_rate = -nan, Pending_hits = 0, Reservation_fails = 0
-	L1D_cache_core[24]: Access = 0, Miss = 0, Miss_rate = -nan, Pending_hits = 0, Reservation_fails = 0
-	L1D_cache_core[25]: Access = 0, Miss = 0, Miss_rate = -nan, Pending_hits = 0, Reservation_fails = 0
-	L1D_cache_core[26]: Access = 0, Miss = 0, Miss_rate = -nan, Pending_hits = 0, Reservation_fails = 0
-	L1D_cache_core[27]: Access = 0, Miss = 0, Miss_rate = -nan, Pending_hits = 0, Reservation_fails = 0
-	L1D_cache_core[28]: Access = 0, Miss = 0, Miss_rate = -nan, Pending_hits = 0, Reservation_fails = 0
-	L1D_cache_core[29]: Access = 0, Miss = 0, Miss_rate = -nan, Pending_hits = 0, Reservation_fails = 0
-	L1D_cache_core[30]: Access = 0, Miss = 0, Miss_rate = -nan, Pending_hits = 0, Reservation_fails = 0
-	L1D_cache_core[31]: Access = 0, Miss = 0, Miss_rate = -nan, Pending_hits = 0, Reservation_fails = 0
-	L1D_cache_core[32]: Access = 0, Miss = 0, Miss_rate = -nan, Pending_hits = 0, Reservation_fails = 0
-	L1D_cache_core[33]: Access = 0, Miss = 0, Miss_rate = -nan, Pending_hits = 0, Reservation_fails = 0
-	L1D_cache_core[34]: Access = 0, Miss = 0, Miss_rate = -nan, Pending_hits = 0, Reservation_fails = 0
-	L1D_cache_core[35]: Access = 0, Miss = 0, Miss_rate = -nan, Pending_hits = 0, Reservation_fails = 0
-	L1D_cache_core[36]: Access = 0, Miss = 0, Miss_rate = -nan, Pending_hits = 0, Reservation_fails = 0
-	L1D_cache_core[37]: Access = 0, Miss = 0, Miss_rate = -nan, Pending_hits = 0, Reservation_fails = 0
-	L1D_cache_core[38]: Access = 0, Miss = 0, Miss_rate = -nan, Pending_hits = 0, Reservation_fails = 0
-	L1D_cache_core[39]: Access = 0, Miss = 0, Miss_rate = -nan, Pending_hits = 0, Reservation_fails = 0
 	L1D_total_cache_accesses = 9344
 	L1D_total_cache_misses = 384
 	L1D_total_cache_miss_rate = 0.0411
@@ -10214,13 +10177,13 @@ Reply_Bank_Level_Parallism =       1.0000
 Reply_Network_in_buffer_full_per_cycle =       0.0000
 Reply_Network_in_buffer_avg_util =       0.0000
 Reply_Network_out_buffer_full_per_cycle =       0.0000
-Reply_Network_out_buffer_avg_util =       0.0095
+Reply_Network_out_buffer_avg_util =       0.3783
 ----------------------------END-of-Interconnect-DETAILS-------------------------
 
 
-gpgpu_simulation_time = 0 days, 0 hrs, 0 min, 3 sec (3 sec)
-gpgpu_simulation_rate = 80554 (inst/sec)
-gpgpu_simulation_rate = 3947 (cycle/sec)
-gpgpu_silicon_slowdown = 304028x
+gpgpu_simulation_time = 0 days, 0 hrs, 0 min, 2 sec (2 sec)
+gpgpu_simulation_rate = 120832 (inst/sec)
+gpgpu_simulation_rate = 5921 (cycle/sec)
+gpgpu_silicon_slowdown = 202668x
 COMPLETED SUCCESSFULLY
 GPGPU-Sim: *** exit detected ***

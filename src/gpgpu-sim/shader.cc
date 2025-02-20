@@ -257,7 +257,7 @@ void shader_core_ctx::create_schedulers() {
         abort();
     };
   }
-
+  fprintf(stdout, "Number of Warps per shader core: %d\n", m_warp.size());
   for (unsigned i = 0; i < m_warp.size(); i++) {
     // distribute i's evenly though schedulers;
     schedulers[i % m_config->gpgpu_num_sched_per_core]->add_supervised_warp_id(
@@ -4459,6 +4459,7 @@ void opndcoll_rfu_t::collector_unit_t::dispatch() {
 
 void exec_simt_core_cluster::create_shader_core_ctx() {
   m_core = new shader_core_ctx *[m_config->n_simt_cores_per_cluster];
+  printf("Number of shader cores being initialized: %d\n",m_config->n_simt_cores_per_cluster);
   for (unsigned i = 0; i < m_config->n_simt_cores_per_cluster; i++) {
     unsigned sid = m_config->cid_to_sid(i, m_cluster_id);
     m_core[i] = new exec_shader_core_ctx(m_gpu, this, sid, m_cluster_id,
