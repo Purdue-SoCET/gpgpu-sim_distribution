@@ -2589,6 +2589,7 @@ class exec_shader_core_ctx : public shader_core_ctx {
     create_front_pipeline();
     create_shd_warp();
     create_schedulers();
+    // fprintf(stdout, "Number of Warps per shader core: %d\n", schedulers[0]->m_supervised_warps.size());
     create_exec_pipeline();
   }
 

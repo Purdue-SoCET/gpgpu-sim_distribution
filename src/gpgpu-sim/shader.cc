@@ -540,6 +540,7 @@ void shader_core_ctx::init_warps(unsigned cta_id, unsigned start_thread,
     unsigned warp_per_cta = cta_size / m_config->warp_size;
     unsigned end_warp = end_thread / m_config->warp_size +
                         ((end_thread % m_config->warp_size) ? 1 : 0);
+    fprintf(stdout, "Start warp %d and end warp %d\n", start_warp, end_warp-1);
     for (unsigned i = start_warp; i < end_warp; ++i) {
       unsigned n_active = 0;
       simt_mask_t active_threads;
@@ -1258,7 +1259,6 @@ void scheduler_unit::order_by_priority(
 }
 
 void scheduler_unit::cycle() {
-  fprintf(stdout, "Number of Warps per shader core based on scheduler: %d\n", m_next_cycle_prioritized_warps.size());
   SCHED_DPRINTF("scheduler_unit::cycle()\n");
   bool valid_inst =
       false;  // there was one warp with a valid instruction to issue (didn't
