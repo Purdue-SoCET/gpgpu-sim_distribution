@@ -2435,7 +2435,7 @@ class shader_core_ctx : public core_t {
 
   int test_res_bus(int latency);
   address_type next_pc(int tid) const;
-  void fetch();
+  virtual void fetch();
   void register_cta_thread_exit(unsigned cta_num, kernel_info_t *kernel);
 
   void decode();
@@ -2449,7 +2449,7 @@ class shader_core_ctx : public core_t {
                           unsigned sch_id);
 
   void create_front_pipeline();
-  void create_schedulers();
+  virtual void create_schedulers();
   void create_exec_pipeline();
 
   // pure virtual methods implemented based on the current execution mode
@@ -2486,7 +2486,7 @@ class shader_core_ctx : public core_t {
 
   void execute();
 
-  void writeback();
+  virtual void writeback();
 
   // used in display_pipeline():
   void dump_warp_state(FILE *fout) const;

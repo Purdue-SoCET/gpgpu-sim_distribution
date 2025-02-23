@@ -1021,7 +1021,7 @@ void shader_core_ctx::fetch() {
       }
     }
   }
-
+ 
   m_L1I->cycle();
 }
 
