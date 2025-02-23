@@ -45,6 +45,7 @@
 #include <set>
 #include <utility>
 #include <vector>
+#include <queue>
 
 //#include "../cuda-sim/ptx.tab.h"
 
@@ -73,7 +74,19 @@
 
 #define WRITE_MASK_SIZE 8
 
+// V3 Definitions
+#define SAT_LIMIT 250
+#define SCALAR_BANDWIDTH 1
+#define SCALAR_CORE_CAPACITY 16
+
 class gpgpu_context;
+
+typedef struct scalar_que_entry {
+  unsigned m_tid;
+  unsigned m_warp_id;
+  address_type start_pc;
+  address_type reconv_pc;
+} scalar_que_entry;
 
 enum exec_unit_type_t {
   NONE = 0,
@@ -106,6 +119,8 @@ class shd_warp_t {
       : m_shader(shader), m_warp_size(warp_size) {
     m_stores_outstanding = 0;
     m_inst_in_pipeline = 0;
+    sat_counters.resize(warp_size);
+    scalar_regs.resize(SCALAR_BANDWIDTH);
     reset();
   }
   void reset() {
@@ -273,6 +288,54 @@ class shd_warp_t {
   unsigned get_dynamic_warp_id() const { return m_dynamic_warp_id; }
   unsigned get_warp_id() const { return m_warp_id; }
 
+  // V3 arch methods
+  unsigned count_active_threads(active_mask_t thread_mask) {
+    unsigned cnt;
+    for(int i=0; i<m_warp_size; i++){
+      if(thread_mask[i]){
+        cnt++;
+      }
+    }
+    return cnt;
+  }
+
+  void increment_sat_counters(active_mask_t result_thread_mask){
+    for(int i=0; i<m_warp_size; i++){
+      if(result_thread_mask[i]){
+        if(sat_counters[i] < SAT_LIMIT){
+          sat_counters[i]++;
+        }
+      }
+    }
+  }
+
+  std::vector<unsigned> check_sat_counters(){
+    std::vector<unsigned> scalar_tids;
+    for(unsigned i=0; i<m_warp_size; i++){
+      if(sat_counters[i] == SAT_LIMIT){
+        scalar_tids.push_back(i);
+      }
+    }
+    return scalar_tids;
+  }
+
+  void get_reconv_pc(unsigned *rpc);
+
+  bool in_div_region();
+
+  bool all_on_scalar(active_mask_t scalar_mask, active_mask_t simt_mask){
+    return (~scalar_mask & simt_mask).none(); //If simt mask & ~scalar mask is all 0s, that means all threads are on scalar core
+  }
+
+  bool all_on_simt(active_mask_t scalar_mask, active_mask_t simt_mask){
+    return (scalar_mask & simt_mask).none(); //If simt mask & scalar mask is all 0s, that means all threads are on simt core
+  }
+
+  active_mask_t get_result_mask(active_mask_t scalar_mask, active_mask_t simt_mask){
+    return ~scalar_mask & simt_mask;
+  }
+
+
   class shader_core_ctx *get_shader() {
     return m_shader;
   }
@@ -316,6 +379,11 @@ class shd_warp_t {
   unsigned m_stores_outstanding;  // number of store requests sent but not yet
                                   // acknowledged
   unsigned m_inst_in_pipeline;
+
+  // V3 arch support
+  active_mask_t scalar_mask;
+  std::vector<unsigned> sat_counters;
+  std::vector<scalar_que_entry> scalar_regs;
 
   // Jin: cdp support
  public:
@@ -2494,6 +2562,37 @@ class shader_core_ctx : public core_t {
 
   unsigned long long m_last_inst_gpu_sim_cycle;
   unsigned long long m_last_inst_gpu_tot_sim_cycle;
+
+  // V3 arch structure
+  std::queue<scalar_que_entry> scalar_que;
+
+  // V3 Arch methods
+  bool push_scalar_que(unsigned tid, unsigned warp_id, address_type start_pc, address_type reconv_pc){
+    scalar_que_entry entry;
+    entry.m_tid = tid;
+    entry.m_warp_id = warp_id;
+    entry.start_pc = start_pc;
+    entry.reconv_pc = reconv_pc;
+
+    if(scalar_que.size() == SCALAR_CORE_CAPACITY){
+      return 0; // Failed to push because que is full
+    }
+
+    else{
+      scalar_que.push(entry);
+      return 1;
+    }
+  }
+
+  unsigned get_scalar_que_ocp(){
+    return scalar_que.size();
+  }
+
+  bool is_scalar_que_empty(){
+    return (bool) get_scalar_que_ocp();
+  }
+
+  scalar_que_entry pop_scalar_que();
 
   // general information
   unsigned m_sid;  // shader id

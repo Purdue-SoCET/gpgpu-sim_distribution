@@ -4920,3 +4920,23 @@ void exec_shader_core_ctx::checkExecutionStatusAndUpdate(warp_inst_t &inst,
     }
   }
 }
+
+
+scalar_que_entry shader_core_ctx::pop_scalar_que(){
+  scalar_que_entry top_of_que = scalar_que.front();
+  scalar_que.pop();
+  return top_of_que;
+}
+
+void shd_warp_t::get_reconv_pc(unsigned *rpc){
+    unsigned tid = m_warp_id * m_warp_size;
+    unsigned pc;
+    m_shader->get_pdom_stack_top_info(tid, &pc, rpc);
+}
+
+bool shd_warp_t::in_div_region(){
+  unsigned tid = m_warp_id * m_warp_size;
+  unsigned pc, rpc;
+  m_shader->get_pdom_stack_top_info(tid, &pc, &rpc);
+  return (bool) rpc;
+}
