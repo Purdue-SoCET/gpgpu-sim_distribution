@@ -88,6 +88,13 @@ typedef struct scalar_que_entry {
   address_type reconv_pc;
 } scalar_que_entry;
 
+typedef struct scalar_reg {
+  unsigned m_tid;
+  address_type start_pc;
+  address_type reconv_pc;
+  bool dirty;
+} scalar_reg;
+
 enum exec_unit_type_t {
   NONE = 0,
   SP = 1,
@@ -313,6 +320,8 @@ class shd_warp_t {
     std::vector<unsigned> scalar_tids;
     for(unsigned i=0; i<m_warp_size; i++){
       if(sat_counters[i] == SAT_LIMIT){
+        fprintf(stdout,"Scalarized thread %d on warp %d\n",i,m_warp_id);
+        scalar_mask[i] = 1;
         scalar_tids.push_back(i);
       }
     }
@@ -323,15 +332,15 @@ class shd_warp_t {
 
   bool in_div_region();
 
-  bool all_on_scalar(active_mask_t scalar_mask, active_mask_t simt_mask){
+  bool all_on_scalar(active_mask_t simt_mask){
     return (~scalar_mask & simt_mask).none(); //If simt mask & ~scalar mask is all 0s, that means all threads are on scalar core
   }
 
-  bool all_on_simt(active_mask_t scalar_mask, active_mask_t simt_mask){
+  bool all_on_simt(active_mask_t simt_mask){
     return (scalar_mask & simt_mask).none(); //If simt mask & scalar mask is all 0s, that means all threads are on simt core
   }
 
-  active_mask_t get_result_mask(active_mask_t scalar_mask, active_mask_t simt_mask){
+  active_mask_t get_result_mask(active_mask_t simt_mask){
     return ~scalar_mask & simt_mask;
   }
 
@@ -383,7 +392,7 @@ class shd_warp_t {
   // V3 arch support
   active_mask_t scalar_mask;
   std::vector<unsigned> sat_counters;
-  std::vector<scalar_que_entry> scalar_regs;
+  std::vector<scalar_reg> scalar_regs;
 
   // Jin: cdp support
  public:
