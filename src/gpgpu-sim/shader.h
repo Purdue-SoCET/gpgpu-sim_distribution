@@ -314,6 +314,10 @@ class shd_warp_t {
     return (~scalar_mask & simt_mask).none(); //If simt mask & ~scalar mask is all 0s, that means all threads are on scalar core
   }
 
+  bool at_least_one_on_scalar(active_mask_t simt_mask){
+    return (scalar_mask & simt_mask).any();
+  }
+
   bool all_on_simt(active_mask_t simt_mask){
     return (scalar_mask & simt_mask).none(); //If simt mask & scalar mask is all 0s, that means all threads are on simt core
   }

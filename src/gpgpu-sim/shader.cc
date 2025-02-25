@@ -1361,10 +1361,13 @@ void scheduler_unit::cycle() {
 
             assert(warp(warp_id).inst_in_pipeline());
 
-            if ((pI->op == LOAD_OP) || (pI->op == STORE_OP) ||
+            if (pc == rpc && warp(warp_id).at_least_one_on_scalar(active_mask)) printf("testing??\n");
+
+            if (!(pc == rpc && warp(warp_id).at_least_one_on_scalar(active_mask)) && 
+                ((pI->op == LOAD_OP) || (pI->op == STORE_OP) ||
                 (pI->op == MEMORY_BARRIER_OP) ||
                 (pI->op == TENSOR_CORE_LOAD_OP) ||
-                (pI->op == TENSOR_CORE_STORE_OP)) {
+                (pI->op == TENSOR_CORE_STORE_OP))) {
               if (m_mem_out->has_free(m_shader->m_config->sub_core_model,
                                       m_id) &&
                   (!diff_exec_units ||
