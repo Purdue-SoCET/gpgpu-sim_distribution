@@ -86,6 +86,8 @@ enum exec_unit_type_t {
   SPECIALIZED = 7
 };
 
+enum CoreType { SIMT_CORE, SCALAR_CORE };
+
 class thread_ctx_t {
  public:
   unsigned m_cta_id;  // hardware CTA this thread belongs
@@ -102,18 +104,17 @@ class thread_ctx_t {
 
 class shd_warp_t {
  public:
-  shd_warp_t(class shader_core_ctx *shader, unsigned warp_size, unsigned warp_id)
-      : m_shader(shader), m_warp_size(warp_size), m_warp_id(warp_id) {  
+  shd_warp_t(class shader_core_ctx *shader, unsigned warp_size)
+      : m_shader(shader), m_warp_size(warp_size) {
     m_stores_outstanding = 0;
     m_inst_in_pipeline = 0;
-    reset();  
+    reset();
   }
-
   void reset() {
     assert(m_stores_outstanding == 0);
     assert(m_inst_in_pipeline == 0);
     m_imiss_pending = false;
-    // m_warp_id = (unsigned)-1;
+    m_warp_id = (unsigned)-1;
     m_dynamic_warp_id = (unsigned)-1;
     n_completed = m_warp_size;
     m_n_atomic = 0;
@@ -1526,8 +1527,6 @@ class shader_core_config : public core_config {
           "gpgpu_shader_core_pipeline_opt\n");
       abort();
     }
-  
-    enable_scalar_core = true;  // Ensure scalar cores are created alongside SIMT cores
 
     char *toks = new char[100];
     char *tokd = toks;
@@ -1615,8 +1614,6 @@ class shader_core_config : public core_config {
     return cluster_id * n_simt_cores_per_cluster + cid;
   }
   void set_pipeline_latency();
-
-  bool is_scalar_core_enabled() const { return enable_scalar_core; }
 
   // backward pointer
   class gpgpu_context *gpgpu_ctx;
@@ -1721,9 +1718,6 @@ class shader_core_config : public core_config {
   char *specialized_unit_string[SPECIALIZED_UNIT_NUM];
   mutable std::vector<specialized_unit_params> m_specialized_unit;
   unsigned m_specialized_unit_num;
-
-  private:
-    bool enable_scalar_core;  // Flag to control scalar core instantiation
 };
 
 struct shader_core_stats_pod {
@@ -2072,13 +2066,12 @@ class shader_core_ctx : public core_t {
                   const shader_core_config *config,
                   const memory_config *mem_config, shader_core_stats *stats);
 
+  CoreType get_core_type() const { return m_core_type; }
+  void set_core_type(CoreType type) {
+      m_core_type = type;
+  }
   // used by simt_core_cluster:
   // modifiers
-  unsigned get_warp_size() const { return m_config->warp_size; }
-  shd_warp_t *get_warp(unsigned warp_id) { return m_warp[warp_id]; }
-  void add_warp(shd_warp_t *warp) { 
-    m_warp.push_back(warp); 
-  }
   void cycle();
   void reinit(unsigned start_thread, unsigned end_thread,
               bool reset_not_completed);
@@ -2582,6 +2575,7 @@ class shader_core_ctx : public core_t {
   int find_available_hwtid(unsigned int cta_size, bool occupy);
 
  private:
+  CoreType m_core_type;
   unsigned int m_occupied_n_threads;
   unsigned int m_occupied_shmem;
   unsigned int m_occupied_regs;
@@ -2596,9 +2590,14 @@ class exec_shader_core_ctx : public shader_core_ctx {
                        unsigned shader_id, unsigned tpc_id,
                        const shader_core_config *config,
                        const memory_config *mem_config,
-                       shader_core_stats *stats)
+                       shader_core_stats *stats, unsigned n_simt_cores)
       : shader_core_ctx(gpu, cluster, shader_id, tpc_id, config, mem_config,
                         stats) {
+    if (shader_id < n_simt_cores) {
+        set_core_type(SIMT_CORE);
+    } else {
+        set_core_type(SCALAR_CORE);
+    }
     create_front_pipeline();
     create_shd_warp();
     create_schedulers();
@@ -2757,7 +2756,6 @@ class shader_memory_interface : public mem_fetch_interface {
     m_core->inc_simt_to_mem(mf->get_num_flits(true));
     m_cluster->icnt_inject_request_packet(mf);
   }
-  simt_core_cluster *get_cluster() const { return m_cluster; }
 
  private:
   shader_core_ctx *m_core;

@@ -92,17 +92,32 @@ std::list<unsigned> shader_core_ctx::get_regs_written(const inst_t &fvt) const {
 }
 
 void exec_shader_core_ctx::create_shd_warp() {
-  m_warp.resize(m_config->max_warps_per_shader);
-  for (unsigned k = 0; k < m_config->max_warps_per_shader; ++k) {
-    m_warp[k] = new shd_warp_t(this, m_config->warp_size, k);  // Assign warp_id = k
-  }
-}
+    m_warp.resize(m_config->max_warps_per_shader);
 
-void exec_shader_core_ctx::create_sclr_warp() {
-  m_warp.resize(m_config->max_warps_per_shader);
-  for (unsigned k = 0; k < m_config->max_warps_per_shader; ++k) {
-    m_warp[k] = new shd_warp_t(this, 1, k);  // Assign warp_id = k
-  }
+    CoreType core_type = get_core_type();
+    // printf("Creating warps for core type: %s\n", (core_type == SIMT_CORE) ? "SIMT_CORE" : "SCALAR_CORE");
+
+    for (unsigned k = 0; k < m_config->max_warps_per_shader; ++k) {
+
+        std::bitset<MAX_WARP_SIZE> active_mask;
+        if (core_type == SIMT_CORE) {
+            // Use normal warp size
+            m_warp[k] = new shd_warp_t(this, m_config->warp_size);
+            // SIMT core: all threads active
+            active_mask.set();  // Set all bits to 1
+        } else {
+            // Scalar core: only the first thread active
+            m_warp[k] = new shd_warp_t(this, 1);
+            active_mask.reset();  // Set all bits to 0
+            active_mask.set(0);   // Set the first bit to 1
+        }
+
+        // Initialize the warp with the appropriate active mask
+        m_warp[k]->init(0, 0, k, active_mask, k, 0);
+        // printf("%s Core: Warp %u initialized with active mask %s\n",
+        //        (core_type == SIMT_CORE) ? "SIMT" : "Scalar",
+        //        k, active_mask.to_string().c_str());
+    }
 }
 
 void shader_core_ctx::create_front_pipeline() {
@@ -473,15 +488,14 @@ void shader_core_ctx::create_exec_pipeline() {
   }
 }
 
-// Constructor for SIMT Core (Modified to Add Scalar Core)
 shader_core_ctx::shader_core_ctx(class gpgpu_sim *gpu,
                                  class simt_core_cluster *cluster,
                                  unsigned shader_id, unsigned tpc_id,
                                  const shader_core_config *config,
                                  const memory_config *mem_config,
                                  shader_core_stats *stats)
-    : core_t(gpu, NULL, config->warp_size, config->n_thread_per_shader), // sets numbers of threads per warp and total threads per core
-      m_barriers(this, config->max_warps_per_shader, config->max_cta_per_core, 
+    : core_t(gpu, NULL, config->warp_size, config->n_thread_per_shader),
+      m_barriers(this, config->max_warps_per_shader, config->max_cta_per_core,
                  config->max_barriers_per_cta, config->warp_size),
       m_active_warps(0),
       m_dynamic_warp_id(0) {
@@ -537,7 +551,6 @@ void shader_core_ctx::reinit(unsigned start_thread, unsigned end_thread,
   }
 }
 
-// Initializing the warps
 void shader_core_ctx::init_warps(unsigned cta_id, unsigned start_thread,
                                  unsigned end_thread, unsigned ctaid,
                                  int cta_size, kernel_info_t &kernel) {
@@ -1050,12 +1063,6 @@ void shader_core_ctx::issue_warp(register_set &pipe_reg_set,
       pipe_reg_set.get_free(m_config->sub_core_model, sch_id);
   assert(pipe_reg);
 
-  if (warp_id >= m_config->max_warps_per_shader) {  // Scalar warps start after max SIMT warps
-      printf("[SCALAR_DEBUG] Executing scalar warp %d on scalar core %d\n", warp_id, m_sid);
-  } else {
-      printf("[SIMT_DEBUG] Executing SIMT warp %d on shader core %d\n", warp_id, m_sid);
-  }
-
   m_warp[warp_id]->ibuffer_free();
   assert(next_inst->valid());
   **pipe_reg = *next_inst;  // static instruction information
@@ -1292,11 +1299,6 @@ void scheduler_unit::cycle() {
     SCHED_DPRINTF("Testing (warp_id %u, dynamic_warp_id %u)\n",
                   (*iter)->get_warp_id(), (*iter)->get_dynamic_warp_id());
     unsigned warp_id = (*iter)->get_warp_id();
-    if (warp_id >= m_shader->m_config->max_warps_per_shader) {
-        printf("[SCALAR_DEBUG] Scheduling scalar warp %d on scalar core %d\n", warp_id, core_id);
-    } else {
-        printf("[SIMT_DEBUG] Scheduling SIMT warp %d on shader core %d\n", warp_id, core_id);
-    }
     unsigned checked = 0;
     unsigned issued = 0;
     exec_unit_type_t previous_issued_inst_exec_type = exec_unit_type_t::NONE;
@@ -1617,66 +1619,26 @@ bool scheduler_unit::sort_warps_by_oldest_dynamic_id(shd_warp_t *lhs,
 }
 
 void lrr_scheduler::order_warps() {
-    m_next_cycle_prioritized_warps.clear();
-
-    // Iterate over all warps in the shader core (SIMT + Scalar)
-    for (unsigned i = 0; i < m_shader->get_config()->max_warps_per_shader; i++) {
-        shd_warp_t *warp = m_shader->get_warp(i);
-        if (!warp->done_exit()) {
-            m_next_cycle_prioritized_warps.push_back(warp);
-        }
-    }
-
-    order_lrr(m_next_cycle_prioritized_warps, m_supervised_warps,
-              m_last_supervised_issued, m_supervised_warps.size());
+  order_lrr(m_next_cycle_prioritized_warps, m_supervised_warps,
+            m_last_supervised_issued, m_supervised_warps.size());
 }
 void rrr_scheduler::order_warps() {
-    m_next_cycle_prioritized_warps.clear();
-
-    // Iterate over all warps in the shader core (SIMT + Scalar)
-    for (unsigned i = 0; i < m_shader->get_config()->max_warps_per_shader; i++) {
-        shd_warp_t *warp = m_shader->get_warp(i);
-        if (!warp->done_exit()) {
-            m_next_cycle_prioritized_warps.push_back(warp);
-        }
-    }
-
-    order_rrr(m_next_cycle_prioritized_warps, m_supervised_warps,
-              m_last_supervised_issued, m_supervised_warps.size());
+  order_rrr(m_next_cycle_prioritized_warps, m_supervised_warps,
+            m_last_supervised_issued, m_supervised_warps.size());
 }
 
 void gto_scheduler::order_warps() {
-    m_next_cycle_prioritized_warps.clear();
-
-    // Iterate over all warps in the shader core (SIMT + Scalar)
-    for (unsigned i = 0; i < m_shader->get_config()->max_warps_per_shader; i++) {
-        shd_warp_t *warp = m_shader->get_warp(i);
-        if (!warp->done_exit()) {
-            m_next_cycle_prioritized_warps.push_back(warp);
-        }
-    }
-
-    order_by_priority(m_next_cycle_prioritized_warps, m_supervised_warps,
-                      m_last_supervised_issued, m_supervised_warps.size(),
-                      ORDERING_GREEDY_THEN_PRIORITY_FUNC,
-                      scheduler_unit::sort_warps_by_oldest_dynamic_id);
+  order_by_priority(m_next_cycle_prioritized_warps, m_supervised_warps,
+                    m_last_supervised_issued, m_supervised_warps.size(),
+                    ORDERING_GREEDY_THEN_PRIORITY_FUNC,
+                    scheduler_unit::sort_warps_by_oldest_dynamic_id);
 }
 
 void oldest_scheduler::order_warps() {
-    m_next_cycle_prioritized_warps.clear();
-
-    // Iterate over all warps in the shader core (SIMT + Scalar)
-    for (unsigned i = 0; i < m_shader->get_config()->max_warps_per_shader; i++) {
-        shd_warp_t *warp = m_shader->get_warp(i);
-        if (!warp->done_exit()) {
-            m_next_cycle_prioritized_warps.push_back(warp);
-        }
-    }
-
-    order_by_priority(m_next_cycle_prioritized_warps, m_supervised_warps,
-                      m_last_supervised_issued, m_supervised_warps.size(),
-                      ORDERED_PRIORITY_FUNC_ONLY,
-                      scheduler_unit::sort_warps_by_oldest_dynamic_id);
+  order_by_priority(m_next_cycle_prioritized_warps, m_supervised_warps,
+                    m_last_supervised_issued, m_supervised_warps.size(),
+                    ORDERED_PRIORITY_FUNC_ONLY,
+                    scheduler_unit::sort_warps_by_oldest_dynamic_id);
 }
 
 void two_level_active_scheduler::do_on_warp_issued(
@@ -1696,56 +1658,85 @@ void two_level_active_scheduler::do_on_warp_issued(
 }
 
 void two_level_active_scheduler::order_warps() {
-    m_next_cycle_prioritized_warps.clear();
-
-    // Move waiting warps to pending list
-    for (auto it = m_next_cycle_prioritized_warps.begin(); it != m_next_cycle_prioritized_warps.end();) {
-        shd_warp_t *warp = *it;
-        bool waiting = warp->waiting();
-
-        for (int i = 0; i < MAX_INPUT_VALUES; i++) {
-            const warp_inst_t *inst = warp->ibuffer_next_inst();
-            if (inst && inst->in[i] > 0 && this->m_scoreboard->islongop(warp->get_warp_id(), inst->in[i])) {
-                waiting = true;
-            }
-        }
-
-        if (waiting) {
-            m_pending_warps.push_back(warp);
-            it = m_next_cycle_prioritized_warps.erase(it);
-        } else {
-            ++it;
-        }
+  // Move waiting warps to m_pending_warps
+  unsigned num_demoted = 0;
+  for (std::vector<shd_warp_t *>::iterator iter =
+           m_next_cycle_prioritized_warps.begin();
+       iter != m_next_cycle_prioritized_warps.end();) {
+    bool waiting = (*iter)->waiting();
+    for (int i = 0; i < MAX_INPUT_VALUES; i++) {
+      const warp_inst_t *inst = (*iter)->ibuffer_next_inst();
+      // Is the instruction waiting on a long operation?
+      if (inst && inst->in[i] > 0 &&
+          this->m_scoreboard->islongop((*iter)->get_warp_id(), inst->in[i])) {
+        waiting = true;
+      }
     }
 
-    // Promote pending warps if space is available
-    while (m_next_cycle_prioritized_warps.size() < m_max_active_warps && !m_pending_warps.empty()) {
-        m_next_cycle_prioritized_warps.push_back(m_pending_warps.front());
-        m_pending_warps.pop_front();
+    if (waiting) {
+      m_pending_warps.push_back(*iter);
+      iter = m_next_cycle_prioritized_warps.erase(iter);
+      SCHED_DPRINTF("DEMOTED warp_id=%d, dynamic_warp_id=%d\n",
+                    (*iter)->get_warp_id(), (*iter)->get_dynamic_warp_id());
+      ++num_demoted;
+    } else {
+      ++iter;
     }
+  }
+
+  // If there is space in m_next_cycle_prioritized_warps, promote the next
+  // m_pending_warps
+  unsigned num_promoted = 0;
+  if (SCHEDULER_PRIORITIZATION_SRR == m_outer_level_prioritization) {
+    while (m_next_cycle_prioritized_warps.size() < m_max_active_warps) {
+      m_next_cycle_prioritized_warps.push_back(m_pending_warps.front());
+      m_pending_warps.pop_front();
+      SCHED_DPRINTF(
+          "PROMOTED warp_id=%d, dynamic_warp_id=%d\n",
+          (m_next_cycle_prioritized_warps.back())->get_warp_id(),
+          (m_next_cycle_prioritized_warps.back())->get_dynamic_warp_id());
+      ++num_promoted;
+    }
+  } else {
+    fprintf(stderr, "Unimplemented m_outer_level_prioritization: %d\n",
+            m_outer_level_prioritization);
+    abort();
+  }
+  assert(num_promoted == num_demoted);
+}
+
+swl_scheduler::swl_scheduler(shader_core_stats *stats, shader_core_ctx *shader,
+                             Scoreboard *scoreboard, simt_stack **simt,
+                             std::vector<shd_warp_t *> *warp,
+                             register_set *sp_out, register_set *dp_out,
+                             register_set *sfu_out, register_set *int_out,
+                             register_set *tensor_core_out,
+                             std::vector<register_set *> &spec_cores_out,
+                             register_set *mem_out, int id, char *config_string)
+    : scheduler_unit(stats, shader, scoreboard, simt, warp, sp_out, dp_out,
+                     sfu_out, int_out, tensor_core_out, spec_cores_out, mem_out,
+                     id) {
+  unsigned m_prioritization_readin;
+  int ret = sscanf(config_string, "warp_limiting:%d:%d",
+                   &m_prioritization_readin, &m_num_warps_to_limit);
+  assert(2 == ret);
+  m_prioritization = (scheduler_prioritization_type)m_prioritization_readin;
+  // Currently only GTO is implemented
+  assert(m_prioritization == SCHEDULER_PRIORITIZATION_GTO);
+  assert(m_num_warps_to_limit <= shader->get_config()->max_warps_per_shader);
 }
 
 void swl_scheduler::order_warps() {
-    m_next_cycle_prioritized_warps.clear();
-
-    // Iterate over all warps in the shader core (SIMT + Scalar)
-    for (unsigned i = 0; i < m_shader->get_config()->max_warps_per_shader; i++) {
-        shd_warp_t *warp = m_shader->get_warp(i);
-        if (!warp->done_exit()) {
-            m_next_cycle_prioritized_warps.push_back(warp);
-        }
-    }
-
-    if (SCHEDULER_PRIORITIZATION_GTO == m_prioritization) {
-        order_by_priority(m_next_cycle_prioritized_warps, m_supervised_warps,
-                          m_last_supervised_issued,
-                          MIN(m_num_warps_to_limit, m_supervised_warps.size()),
-                          ORDERING_GREEDY_THEN_PRIORITY_FUNC,
-                          scheduler_unit::sort_warps_by_oldest_dynamic_id);
-    } else {
-        fprintf(stderr, "swl_scheduler m_prioritization = %d\n", m_prioritization);
-        abort();
-    }
+  if (SCHEDULER_PRIORITIZATION_GTO == m_prioritization) {
+    order_by_priority(m_next_cycle_prioritized_warps, m_supervised_warps,
+                      m_last_supervised_issued,
+                      MIN(m_num_warps_to_limit, m_supervised_warps.size()),
+                      ORDERING_GREEDY_THEN_PRIORITY_FUNC,
+                      scheduler_unit::sort_warps_by_oldest_dynamic_id);
+  } else {
+    fprintf(stderr, "swl_scheduler m_prioritization = %d\n", m_prioritization);
+    abort();
+  }
 }
 
 void shader_core_ctx::read_operands() {
@@ -4489,32 +4480,36 @@ void opndcoll_rfu_t::collector_unit_t::dispatch() {
 }
 
 void exec_simt_core_cluster::create_shader_core_ctx() {
-    unsigned num_cores = m_config->n_simt_cores_per_cluster;
-    
-    // Allocate memory for cores (SIMT + Scalar)
-    m_core = new shader_core_ctx *[num_cores * 2];
+    unsigned total_cores = m_config->n_simt_cores_per_cluster;
+    unsigned n_simt_cores = total_cores / 2;  // Half SIMT cores
+    unsigned n_scalar_cores = total_cores - n_simt_cores;  // Remaining scalar cores
 
-    for (unsigned i = 0; i < num_cores; i++) {
+    // Validate total cores
+    if (total_cores % 2 != 0) {
+        printf("Warning: Total cores (%u) is not even. Adjusting scalar cores.\n", total_cores);
+        n_scalar_cores = total_cores - n_simt_cores;
+    }
+
+    m_core = new shader_core_ctx * [total_cores];
+
+    // Create SIMT cores
+    for (unsigned i = 0; i < n_simt_cores; i++) {
         unsigned sid = m_config->cid_to_sid(i, m_cluster_id);
+        m_core[i] = new exec_shader_core_ctx(m_gpu, this, sid, m_cluster_id,
+                                            m_config, m_mem_config, m_stats, n_simt_cores);
+        m_core[i]->set_core_type(SIMT_CORE);  // Mark as SIMT core
+        printf("Created SIMT core %u\n", i);
+        m_core_sim_order.push_back(i);
+    }
 
-        // Create and register the standard SIMT core
-        shader_core_ctx *simt_core = new exec_shader_core_ctx(m_gpu, this, sid, 
-                                                              m_cluster_id, m_config, 
-                                                              m_mem_config, m_stats);
-        m_core[i] = simt_core; // Store SIMT core
-
-        // Create scalar core
-        if (m_config->is_scalar_core_enabled()) { 
-            unsigned scalar_sid = sid + 1000; // Unique ID for scalar core
-            shader_core_ctx *scalar_core = new exec_shader_core_ctx(m_gpu, this, 
-                                                                    scalar_sid, m_cluster_id, 
-                                                                    m_config, m_mem_config, m_stats);
-          unsigned scalar_warp_id = m_config->max_warps_per_shader + i;  
-          shd_warp_t *scalar_warp = new shd_warp_t(scalar_core, 1, scalar_warp_id);
-          scalar_core->add_warp(scalar_warp); // Register warp
-
-          m_core[num_cores + i] = scalar_core; // Store scalar core
-        }
+    // Create scalar cores
+    for (unsigned i = n_simt_cores; i < total_cores; i++) {
+        unsigned sid = m_config->cid_to_sid(i, m_cluster_id);
+        m_core[i] = new exec_shader_core_ctx(m_gpu, this, sid, m_cluster_id,
+                                            m_config, m_mem_config, m_stats, n_simt_cores);
+        m_core[i]->set_core_type(SCALAR_CORE);  // Mark as scalar core
+        printf("Created scalar core %u\n", i);
+        m_core_sim_order.push_back(i);
     }
 }
 
@@ -4524,7 +4519,7 @@ simt_core_cluster::simt_core_cluster(class gpgpu_sim *gpu, unsigned cluster_id,
                                      shader_core_stats *stats,
                                      class memory_stats_t *mstats) {
   m_config = config;
-  m_cta_issue_next_core = m_config->n_simt_cores_per_cluster * 2 -
+  m_cta_issue_next_core = m_config->n_simt_cores_per_cluster -
                           1;  // this causes first launch to use hw cta 0
   m_cluster_id = cluster_id;
   m_gpu = gpu;
@@ -4546,7 +4541,7 @@ void simt_core_cluster::core_cycle() {
 }
 
 void simt_core_cluster::reinit() {
-  for (unsigned i = 0; i < (m_config->n_simt_cores_per_cluster * 2); i++)
+  for (unsigned i = 0; i < m_config->n_simt_cores_per_cluster; i++)
     m_core[i]->reinit(0, m_config->n_thread_per_shader, true);
 }
 
@@ -4556,13 +4551,13 @@ unsigned simt_core_cluster::max_cta(const kernel_info_t &kernel) {
 
 unsigned simt_core_cluster::get_not_completed() const {
   unsigned not_completed = 0;
-  for (unsigned i = 0; i < m_config->n_simt_cores_per_cluster * 2; i++)
+  for (unsigned i = 0; i < m_config->n_simt_cores_per_cluster; i++)
     not_completed += m_core[i]->get_not_completed();
   return not_completed;
 }
 
 void simt_core_cluster::print_not_completed(FILE *fp) const {
-  for (unsigned i = 0; i < m_config->n_simt_cores_per_cluster * 2; i++) {
+  for (unsigned i = 0; i < m_config->n_simt_cores_per_cluster; i++) {
     unsigned not_completed = m_core[i]->get_not_completed();
     unsigned sid = m_config->cid_to_sid(i, m_cluster_id);
     fprintf(fp, "%u(%u) ", sid, not_completed);
@@ -4572,7 +4567,7 @@ void simt_core_cluster::print_not_completed(FILE *fp) const {
 float simt_core_cluster::get_current_occupancy(
     unsigned long long &active, unsigned long long &total) const {
   float aggregate = 0.f;
-  for (unsigned i = 0; i < m_config->n_simt_cores_per_cluster * 2; i++) {
+  for (unsigned i = 0; i < m_config->n_simt_cores_per_cluster; i++) {
     aggregate += m_core[i]->get_current_occupancy(active, total);
   }
   return aggregate / m_config->n_simt_cores_per_cluster;
@@ -4580,21 +4575,21 @@ float simt_core_cluster::get_current_occupancy(
 
 unsigned simt_core_cluster::get_n_active_cta() const {
   unsigned n = 0;
-  for (unsigned i = 0; i < m_config->n_simt_cores_per_cluster * 2; i++)
+  for (unsigned i = 0; i < m_config->n_simt_cores_per_cluster; i++)
     n += m_core[i]->get_n_active_cta();
   return n;
 }
 
 unsigned simt_core_cluster::get_n_active_sms() const {
   unsigned n = 0;
-  for (unsigned i = 0; i < m_config->n_simt_cores_per_cluster * 2; i++)
+  for (unsigned i = 0; i < m_config->n_simt_cores_per_cluster; i++)
     n += m_core[i]->isactive();
   return n;
 }
 
 unsigned simt_core_cluster::issue_block2core() {
   unsigned num_blocks_issued = 0;
-  for (unsigned i = 0; i < m_config->n_simt_cores_per_cluster * 2; i++) {
+  for (unsigned i = 0; i < m_config->n_simt_cores_per_cluster; i++) {
     unsigned core =
         (i + m_cta_issue_next_core + 1) % m_config->n_simt_cores_per_cluster;
 
@@ -4632,12 +4627,12 @@ unsigned simt_core_cluster::issue_block2core() {
 }
 
 void simt_core_cluster::cache_flush() {
-  for (unsigned i = 0; i < m_config->n_simt_cores_per_cluster * 2; i++)
+  for (unsigned i = 0; i < m_config->n_simt_cores_per_cluster; i++)
     m_core[i]->cache_flush();
 }
 
 void simt_core_cluster::cache_invalidate() {
-  for (unsigned i = 0; i < m_config->n_simt_cores_per_cluster * 2; i++)
+  for (unsigned i = 0; i < m_config->n_simt_cores_per_cluster; i++)
     m_core[i]->cache_invalidate();
 }
 
@@ -4873,7 +4868,7 @@ void simt_core_cluster::display_pipeline(unsigned sid, FILE *fout,
 
 void simt_core_cluster::print_cache_stats(FILE *fp, unsigned &dl1_accesses,
                                           unsigned &dl1_misses) const {
-  for (unsigned i = 0; i < m_config->n_simt_cores_per_cluster * 2; ++i) {
+  for (unsigned i = 0; i < m_config->n_simt_cores_per_cluster; ++i) {
     m_core[i]->print_cache_stats(fp, dl1_accesses, dl1_misses);
   }
 }
@@ -4882,7 +4877,7 @@ void simt_core_cluster::get_icnt_stats(long &n_simt_to_mem,
                                        long &n_mem_to_simt) const {
   long simt_to_mem = 0;
   long mem_to_simt = 0;
-  for (unsigned i = 0; i < m_config->n_simt_cores_per_cluster * 2; ++i) {
+  for (unsigned i = 0; i < m_config->n_simt_cores_per_cluster; ++i) {
     m_core[i]->get_icnt_power_stats(simt_to_mem, mem_to_simt);
   }
   n_simt_to_mem = simt_to_mem;
@@ -4890,7 +4885,7 @@ void simt_core_cluster::get_icnt_stats(long &n_simt_to_mem,
 }
 
 void simt_core_cluster::get_cache_stats(cache_stats &cs) const {
-  for (unsigned i = 0; i < m_config->n_simt_cores_per_cluster * 2; ++i) {
+  for (unsigned i = 0; i < m_config->n_simt_cores_per_cluster; ++i) {
     m_core[i]->get_cache_stats(cs);
   }
 }
@@ -4900,7 +4895,7 @@ void simt_core_cluster::get_L1I_sub_stats(struct cache_sub_stats &css) const {
   struct cache_sub_stats total_css;
   temp_css.clear();
   total_css.clear();
-  for (unsigned i = 0; i < m_config->n_simt_cores_per_cluster * 2; ++i) {
+  for (unsigned i = 0; i < m_config->n_simt_cores_per_cluster; ++i) {
     m_core[i]->get_L1I_sub_stats(temp_css);
     total_css += temp_css;
   }
@@ -4911,7 +4906,7 @@ void simt_core_cluster::get_L1D_sub_stats(struct cache_sub_stats &css) const {
   struct cache_sub_stats total_css;
   temp_css.clear();
   total_css.clear();
-  for (unsigned i = 0; i < m_config->n_simt_cores_per_cluster * 2; ++i) {
+  for (unsigned i = 0; i < m_config->n_simt_cores_per_cluster; ++i) {
     m_core[i]->get_L1D_sub_stats(temp_css);
     total_css += temp_css;
   }
@@ -4922,7 +4917,7 @@ void simt_core_cluster::get_L1C_sub_stats(struct cache_sub_stats &css) const {
   struct cache_sub_stats total_css;
   temp_css.clear();
   total_css.clear();
-  for (unsigned i = 0; i < m_config->n_simt_cores_per_cluster * 2; ++i) {
+  for (unsigned i = 0; i < m_config->n_simt_cores_per_cluster; ++i) {
     m_core[i]->get_L1C_sub_stats(temp_css);
     total_css += temp_css;
   }
@@ -4949,7 +4944,7 @@ void exec_shader_core_ctx::checkExecutionStatusAndUpdate(warp_inst_t &inst,
     unsigned num_addrs;
     num_addrs = translate_local_memaddr(
         inst.get_addr(t), tid,
-        m_config->n_simt_clusters * m_config->n_simt_cores_per_cluster * 2,
+        m_config->n_simt_clusters * m_config->n_simt_cores_per_cluster,
         inst.data_size, (new_addr_type *)localaddrs);
     inst.set_addr(t, (new_addr_type *)localaddrs, num_addrs);
   }
