@@ -92,10 +92,32 @@ std::list<unsigned> shader_core_ctx::get_regs_written(const inst_t &fvt) const {
 }
 
 void exec_shader_core_ctx::create_shd_warp() {
-  m_warp.resize(m_config->max_warps_per_shader);
-  for (unsigned k = 0; k < m_config->max_warps_per_shader; ++k) {
-    m_warp[k] = new shd_warp_t(this, m_config->warp_size);
-  }
+    m_warp.resize(m_config->max_warps_per_shader);
+
+    CoreType core_type = get_core_type();
+    // printf("Creating warps for core type: %s\n", (core_type == SIMT_CORE) ? "SIMT_CORE" : "SCALAR_CORE");
+
+    for (unsigned k = 0; k < m_config->max_warps_per_shader; ++k) {
+
+        std::bitset<MAX_WARP_SIZE> active_mask;
+        if (core_type == SIMT_CORE) {
+            // Use normal warp size
+            m_warp[k] = new shd_warp_t(this, m_config->warp_size);
+            // SIMT core: all threads active
+            active_mask.set();  // Set all bits to 1
+        } else {
+            // Scalar core: only the first thread active
+            m_warp[k] = new shd_warp_t(this, 1);
+            active_mask.reset();  // Set all bits to 0
+            active_mask.set(0);   // Set the first bit to 1
+        }
+
+        // Initialize the warp with the appropriate active mask
+        m_warp[k]->init(0, 0, k, active_mask, k, 0);
+        // printf("%s Core: Warp %u initialized with active mask %s\n",
+        //        (core_type == SIMT_CORE) ? "SIMT" : "Scalar",
+        //        k, active_mask.to_string().c_str());
+    }
 }
 
 void shader_core_ctx::create_front_pipeline() {
@@ -4459,13 +4481,37 @@ void opndcoll_rfu_t::collector_unit_t::dispatch() {
 }
 
 void exec_simt_core_cluster::create_shader_core_ctx() {
-  m_core = new shader_core_ctx *[m_config->n_simt_cores_per_cluster];
-  for (unsigned i = 0; i < m_config->n_simt_cores_per_cluster; i++) {
-    unsigned sid = m_config->cid_to_sid(i, m_cluster_id);
-    m_core[i] = new exec_shader_core_ctx(m_gpu, this, sid, m_cluster_id,
-                                         m_config, m_mem_config, m_stats);
-    m_core_sim_order.push_back(i);
-  }
+    unsigned total_cores = m_config->n_simt_cores_per_cluster;
+    unsigned n_simt_cores = total_cores / 2;  // Half SIMT cores
+    unsigned n_scalar_cores = total_cores - n_simt_cores;  // Remaining scalar cores
+
+    // Validate total cores
+    if (total_cores % 2 != 0) {
+        printf("Warning: Total cores (%u) is not even. Adjusting scalar cores.\n", total_cores);
+        n_scalar_cores = total_cores - n_simt_cores;
+    }
+
+    m_core = new shader_core_ctx * [total_cores];
+
+    // Create SIMT cores
+    for (unsigned i = 0; i < n_simt_cores; i++) {
+        unsigned sid = m_config->cid_to_sid(i, m_cluster_id);
+        m_core[i] = new exec_shader_core_ctx(m_gpu, this, sid, m_cluster_id,
+                                            m_config, m_mem_config, m_stats, n_simt_cores);
+        m_core[i]->set_core_type(SIMT_CORE);  // Mark as SIMT core
+        printf("Created SIMT core %u\n", i);
+        m_core_sim_order.push_back(i);
+    }
+
+    // Create scalar cores
+    for (unsigned i = n_simt_cores; i < total_cores; i++) {
+        unsigned sid = m_config->cid_to_sid(i, m_cluster_id);
+        m_core[i] = new exec_shader_core_ctx(m_gpu, this, sid, m_cluster_id,
+                                            m_config, m_mem_config, m_stats, n_simt_cores);
+        m_core[i]->set_core_type(SCALAR_CORE);  // Mark as scalar core
+        printf("Created scalar core %u\n", i);
+        m_core_sim_order.push_back(i);
+    }
 }
 
 simt_core_cluster::simt_core_cluster(class gpgpu_sim *gpu, unsigned cluster_id,

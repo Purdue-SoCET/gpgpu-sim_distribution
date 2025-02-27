@@ -86,6 +86,8 @@ enum exec_unit_type_t {
   SPECIALIZED = 7
 };
 
+enum CoreType { SIMT_CORE, SCALAR_CORE };
+
 class thread_ctx_t {
  public:
   unsigned m_cta_id;  // hardware CTA this thread belongs
@@ -2064,6 +2066,10 @@ class shader_core_ctx : public core_t {
                   const shader_core_config *config,
                   const memory_config *mem_config, shader_core_stats *stats);
 
+  CoreType get_core_type() const { return m_core_type; }
+  void set_core_type(CoreType type) {
+      m_core_type = type;
+  }
   // used by simt_core_cluster:
   // modifiers
   void cycle();
@@ -2569,6 +2575,7 @@ class shader_core_ctx : public core_t {
   int find_available_hwtid(unsigned int cta_size, bool occupy);
 
  private:
+  CoreType m_core_type;
   unsigned int m_occupied_n_threads;
   unsigned int m_occupied_shmem;
   unsigned int m_occupied_regs;
@@ -2583,9 +2590,14 @@ class exec_shader_core_ctx : public shader_core_ctx {
                        unsigned shader_id, unsigned tpc_id,
                        const shader_core_config *config,
                        const memory_config *mem_config,
-                       shader_core_stats *stats)
+                       shader_core_stats *stats, unsigned n_simt_cores)
       : shader_core_ctx(gpu, cluster, shader_id, tpc_id, config, mem_config,
                         stats) {
+    if (shader_id < n_simt_cores) {
+        set_core_type(SIMT_CORE);
+    } else {
+        set_core_type(SCALAR_CORE);
+    }
     create_front_pipeline();
     create_shd_warp();
     create_schedulers();
