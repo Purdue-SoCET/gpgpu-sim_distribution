@@ -50,6 +50,7 @@
 #include "stat-tool.h"
 #include "traffic_breakdown.h"
 #include "visualizer.h"
+#include "ttm.h"
 
 #define PRIORITIZE_MSHR_OVER_WB 1
 #define MAX(a, b) (((a) > (b)) ? (a) : (b))
@@ -94,30 +95,31 @@ std::list<unsigned> shader_core_ctx::get_regs_written(const inst_t &fvt) const {
 void exec_shader_core_ctx::create_shd_warp() {
     m_warp.resize(m_config->max_warps_per_shader);
 
+    if (m_config->is_scalar_core_enabled) {
     CoreType core_type = get_core_type();
     // printf("Creating warps for core type: %s\n", (core_type == SIMT_CORE) ? "SIMT_CORE" : "SCALAR_CORE");
 
     for (unsigned k = 0; k < m_config->max_warps_per_shader; ++k) {
 
-        std::bitset<MAX_WARP_SIZE> active_mask;
         if (core_type == SIMT_CORE) {
             // Use normal warp size
             m_warp[k] = new shd_warp_t(this, m_config->warp_size);
-            // SIMT core: all threads active
-            active_mask.set();  // Set all bits to 1
         } else {
             // Scalar core: only the first thread active
-            m_warp[k] = new shd_warp_t(this, 1);
-            active_mask.reset();  // Set all bits to 0
-            active_mask.set(0);   // Set the first bit to 1
+            m_warp[k] = new shd_warp_t(this, m_config->warp_size);
         }
 
         // Initialize the warp with the appropriate active mask
-        m_warp[k]->init(0, 0, k, active_mask, k, 0);
-        // printf("%s Core: Warp %u initialized with active mask %s\n",
-        //        (core_type == SIMT_CORE) ? "SIMT" : "Scalar",
-        //        k, active_mask.to_string().c_str());
+        // m_warp[k]->init(0, 0, k, active_mask, k, 0);
+        printf("%s Core: Warp %u initialized\n",
+               (core_type == SIMT_CORE) ? "SIMT" : "Scalar",
+               k);
     }
+  } else {
+    for (unsigned k = 0; k < m_config->max_warps_per_shader; ++k) {
+      m_warp[k] = new shd_warp_t(this, m_config->warp_size);
+    }
+  }
 }
 
 void shader_core_ctx::create_front_pipeline() {
@@ -278,6 +280,12 @@ void shader_core_ctx::create_schedulers() {
       default:
         abort();
     };
+
+    // v3 addition
+    if (m_config->is_scalar_core_enabled) {
+      m_fetched_register_board = new Scoreboard(m_sid, m_config->max_warps_per_shader, m_gpu); // Fetched Register board is effectively another scoreboard
+    }
+    // end of v3 addition
   }
 
   for (unsigned i = 0; i < m_warp.size(); i++) {
@@ -418,6 +426,11 @@ void shader_core_ctx::create_exec_pipeline() {
     }
   }
 
+  // v3 change to add collector unit
+
+  // v3 change ends
+
+
   m_operand_collector.init(m_config->gpgpu_num_reg_banks, this);
 
   m_num_function_units =
@@ -544,6 +557,7 @@ void shader_core_ctx::reinit(unsigned start_thread, unsigned end_thread,
     m_threadState[i].n_insn = 0;
     m_threadState[i].m_cta_id = -1;
   }
+
   for (unsigned i = start_thread / m_config->warp_size;
        i < end_thread / m_config->warp_size; ++i) {
     m_warp[i]->reset();
@@ -1059,8 +1073,26 @@ void shader_core_ctx::issue_warp(register_set &pipe_reg_set,
                                  const warp_inst_t *next_inst,
                                  const active_mask_t &active_mask,
                                  unsigned warp_id, unsigned sch_id) {
-  warp_inst_t **pipe_reg =
-      pipe_reg_set.get_free(m_config->sub_core_model, sch_id);
+  // v3 additions
+  if (m_config->is_scalar_core_enabled) {
+    // Modified instr has src registers become dest registers so checkCollision will flag properly
+    warp_inst_t frb_entry = *next_inst; 
+    for (unsigned i = 0; i < MAX_REG_OPERANDS; i++) {
+        frb_entry.arch_reg.dst[i] = next_inst->arch_reg.src[i];
+    }
+
+    if (m_fetched_register_board->checkCollision(warp_id, &frb_entry)) { // Check if src reg (moved to dst reg) is in fetched register board
+        // Set steal signal, add to FRB
+        steal = true;
+        // passed instr = next_inst        
+        m_fetched_register_board->reserveRegisters(&frb_entry);
+        return;  
+    } 
+    // Otherwise proceed as normal
+  }
+  // end of v3 additions
+  
+  warp_inst_t **pipe_reg = pipe_reg_set.get_free(m_config->sub_core_model, sch_id);
   assert(pipe_reg);
 
   m_warp[warp_id]->ibuffer_free();
@@ -1993,6 +2025,15 @@ void shader_core_ctx::writeback() {
     unsigned warp_id = pipe_reg->warp_id();
     m_scoreboard->releaseRegisters(pipe_reg);
     m_warp[warp_id]->dec_inst_in_pipeline();
+
+    // V3 changes
+    // Mark the register as modified in the written register board
+    if (m_config->is_scalar_core_enabled) {
+      m_written_register_board.emplace(*pipe_reg); 
+      // might need to move dst reg to src reg when reconverging
+    }
+    // end of V3 changes
+
     warp_inst_complete(*pipe_reg);
     m_gpu->gpu_sim_insn_last_update_sid = m_sid;
     m_gpu->gpu_sim_insn_last_update = m_gpu->gpu_sim_cycle;
@@ -3486,22 +3527,22 @@ void shader_core_ctx::display_pipeline(FILE *fout, int print_mem,
   //    fprintf(fout,"ID/OC (MEM) = ");
   //    print_stage(ID_OC_MEM, fout);
   
-  // fprintf(fout, "-------------------------- OP COL\n");
-  // m_operand_collector.dump(fout);
-  //  fprintf(fout, "OC/EX (SP)  = ");
-  //    print_stage(OC_EX_SP, fout);
-  //    fprintf(fout, "OC/EX (SFU) = ");
-  //    print_stage(OC_EX_SFU, fout);
-  //    fprintf(fout, "OC/EX (MEM) = ");
-  //    print_stage(OC_EX_MEM, fout);
+  fprintf(fout, "-------------------------- OP COL\n");
+  m_operand_collector.dump(fout);
+  fprintf(fout, "OC/EX (SP)  = ");
+  print_stage(OC_EX_SP, fout);
+  fprintf(fout, "OC/EX (SFU) = ");
+  print_stage(OC_EX_SFU, fout);
+  fprintf(fout, "OC/EX (MEM) = ");
+  print_stage(OC_EX_MEM, fout);
   
-  // fprintf(fout, "-------------------------- Pipe Regs\n");
+  fprintf(fout, "-------------------------- Pipe Regs\n");
 
-  // for (unsigned i = 0; i < N_PIPELINE_STAGES; i++) {
-  //   fprintf(fout, "--- %s ---\n", pipeline_stage_name_decode[i]);
-  //   print_stage(i, fout);
-  //   fprintf(fout, "\n");
-  // }
+  for (unsigned i = 0; i < N_PIPELINE_STAGES; i++) {
+    fprintf(fout, "--- %s ---\n", pipeline_stage_name_decode[i]);
+    print_stage(i, fout);
+    fprintf(fout, "\n");
+  }
 
   // fprintf(fout, "-------------------------- Fu\n");
   // for (unsigned n = 0; n < m_num_function_units; n++) {
@@ -3692,7 +3733,14 @@ void shader_core_config::set_pipeline_latency() {
 }
 
 void shader_core_ctx::cycle() {
-  if (!isactive() && get_not_completed() == 0) return;
+  if (!isactive() && get_not_completed() == 0) {
+    if (get_core_type() == SCALAR_CORE) {
+      m_n_active_cta = 1; // Set to make scalar core cycle
+      m_warp[0]->set_next_pc(0x0b0);
+      printf("Not active Scalar PC: %llx\n", m_warp[0]->get_pc()); // figure out how to get fetch() to start fetching from a given PC
+    }
+    return;
+  }
 
   m_stats->shader_cycles[m_sid]++;
 
@@ -4481,6 +4529,8 @@ void opndcoll_rfu_t::collector_unit_t::dispatch() {
 }
 
 void exec_simt_core_cluster::create_shader_core_ctx() {
+  // v3 addition
+  if (m_config->is_scalar_core_enabled) { 
     unsigned total_cores = m_config->n_simt_cores_per_cluster;
     unsigned n_simt_cores = total_cores / 2;  // Half SIMT cores
     unsigned n_scalar_cores = total_cores - n_simt_cores;  // Remaining scalar cores
@@ -4506,12 +4556,31 @@ void exec_simt_core_cluster::create_shader_core_ctx() {
     // Create scalar cores
     for (unsigned i = n_simt_cores; i < total_cores; i++) {
         unsigned sid = m_config->cid_to_sid(i, m_cluster_id);
+
+        shader_core_config *m_scalar_config = new shader_core_config(*m_config);
+        // Scalar Core Configurations
+        m_scalar_config->gpgpu_shader_core_pipeline_opt = "8:1"; //8 warps on scalar core, 1 thread per warp
+        m_scalar_config->warp_size = 8;
+        m_scalar_config->max_warps_per_shader = 8;
+        m_scalar_config->n_thread_per_shader = 8;  
+        m_scalar_config->gpgpu_registers_per_block = 8192; // Less total registers? Tried to keep same number of warp
+
         m_core[i] = new exec_shader_core_ctx(m_gpu, this, sid, m_cluster_id,
-                                            m_config, m_mem_config, m_stats, n_simt_cores);
+                                            m_scalar_config, m_mem_config, m_stats, n_simt_cores);
         m_core[i]->set_core_type(SCALAR_CORE);  // Mark as scalar core
         printf("Created scalar core %u\n", i);
         m_core_sim_order.push_back(i);
     }
+  } // end of v3 addition
+  else {
+    m_core = new shader_core_ctx *[m_config->n_simt_cores_per_cluster];
+    for (unsigned i = 0; i < m_config->n_simt_cores_per_cluster; i++) {
+      unsigned sid = m_config->cid_to_sid(i, m_cluster_id);
+      m_core[i] = new exec_shader_core_ctx(m_gpu, this, sid, m_cluster_id,
+                                           m_config, m_mem_config, m_stats, 0);
+      m_core_sim_order.push_back(i);
+    }
+  }
 }
 
 simt_core_cluster::simt_core_cluster(class gpgpu_sim *gpu, unsigned cluster_id,
@@ -4543,7 +4612,8 @@ void simt_core_cluster::core_cycle() {
 
 void simt_core_cluster::reinit() {
   for (unsigned i = 0; i < m_config->n_simt_cores_per_cluster; i++)
-    m_core[i]->reinit(0, m_config->n_thread_per_shader, true);
+    // m_core[i]->reinit(0, m_config->n_thread_per_shader, true);
+    m_core[i]->reinit(0, m_core[i]->get_config()->n_thread_per_shader, true);
 }
 
 unsigned simt_core_cluster::max_cta(const kernel_info_t &kernel) {
@@ -4964,3 +5034,38 @@ void exec_shader_core_ctx::checkExecutionStatusAndUpdate(warp_inst_t &inst,
     }
   }
 }
+
+//v3 addition
+// void shader_core_ctx::return_fsm_cycle() {
+//   if (m_config->is_scalar_core_enabled) {
+//       curr_state = next_state; 
+//   }
+// }
+
+// void shader_core_ctx::update_return_fsm() {
+//   if (m_config->is_scalar_core_enabled) {
+//       next_state = curr_state; 
+//       // switch(curr_state) {
+//       //     case IDLE:
+//       //         if (reconverge) {
+//       //             next_state = PULL; 
+//       //         }
+//       //     case PULL:
+//       //         if (m_written_register_board.empty()) {
+//       //             next_state = IDLE; 
+//       //         } else {
+//       //             curr_wrb_entry = m_written_register_board.front(); 
+//       //             m_written_register_board.pop();
+//       //             next_state = READING;
+//       //         }
+//       //     case READING:
+              
+//       //         // Use wid and regnum to read from register file
+//       //     case LOOKUP:
+//       //         // Reference divergent thread ID table to find where this belongs in SIMT core
+//       //     case SEND:
+//       //         // set values to send to SIMT core
+//       // }
+//   }
+// }
+// //end of v3 addition

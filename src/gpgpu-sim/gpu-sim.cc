@@ -662,6 +662,13 @@ void shader_core_config::reg_options(class OptionParser *opp) {
                            "OC_SPEC>:<OC_EX_SPEC>,<NAME>}",
                            "0,4,4,4,4,BRA");
   }
+
+  // v3 addition
+  option_parser_register(opp, "-gpgpu_scalar_core_enabled", OPT_BOOL,
+    &is_scalar_core_enabled,
+    "whether v3 architectural changes are active or not", "0");
+  // end of v3 addition
+
 }
 
 void gpgpu_sim_config::reg_options(option_parser_t opp) {
@@ -1803,6 +1810,12 @@ unsigned exec_shader_core_ctx::sim_init_thread(
 }
 
 void shader_core_ctx::issue_block2core(kernel_info_t &kernel) {
+  // v3 addition
+  // if (m_config->is_scalar_core_enabled & get_core_type() == SCALAR_CORE) {
+  //   return; 
+  // }
+  // end v3 addition
+
   if (!m_config->gpgpu_concurrent_kernel_sm)
     set_max_cta(kernel);
   else

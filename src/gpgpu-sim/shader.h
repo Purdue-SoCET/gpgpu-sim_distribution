@@ -45,9 +45,11 @@
 #include <set>
 #include <utility>
 #include <vector>
+#include <queue>
 
 //#include "../cuda-sim/ptx.tab.h"
 
+#include "ttm.h"
 #include "../abstract_hardware_model.h"
 #include "delayqueue.h"
 #include "dram.h"
@@ -1518,6 +1520,7 @@ class shader_core_config : public core_config {
     gpgpu_ctx = ctx;
   }
 
+
   void init() {
     int ntok = sscanf(gpgpu_shader_core_pipeline_opt, "%d:%d",
                       &n_thread_per_shader, &warp_size);
@@ -1713,6 +1716,10 @@ class shader_core_config : public core_config {
   bool perfect_inst_const_cache;
   unsigned inst_fetch_throughput;
   unsigned reg_file_port_throughput;
+
+  // v3 addition
+  bool is_scalar_core_enabled; 
+  // end of v3 addition
 
   // specialized unit config strings
   char *specialized_unit_string[SPECIALIZED_UNIT_NUM];
@@ -2582,6 +2589,23 @@ class shader_core_ctx : public core_t {
   unsigned int m_occupied_ctas;
   std::bitset<MAX_THREAD_PER_SM> m_occupied_hwtid;
   std::map<unsigned int, unsigned int> m_occupied_cta_to_hwtid;
+
+
+  // v3 addition
+  public:
+    bool steal;
+    bool reconverge;
+    // return_fsm_states curr_state;
+    // return_fsm_states next_state; 
+
+  protected:
+    Scoreboard *m_fetched_register_board;
+    std::queue<warp_inst_t> m_written_register_board; 
+
+    void return_fsm_cycle();
+    void update_return_fsm(); 
+  // end of v3 addition
+
 };
 
 class exec_shader_core_ctx : public shader_core_ctx {
@@ -2598,6 +2622,7 @@ class exec_shader_core_ctx : public shader_core_ctx {
     } else {
         set_core_type(SCALAR_CORE);
     }
+    printf("TEST2:%d %d", get_core_type(), config->warp_size); 
     create_front_pipeline();
     create_shd_warp();
     create_schedulers();
