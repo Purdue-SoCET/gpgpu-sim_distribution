@@ -326,6 +326,10 @@ class shd_warp_t {
     return ~scalar_mask & simt_mask;
   }
 
+  active_mask_t get_scalar_mask() {
+    return scalar_mask;
+  }
+
 
   class shader_core_ctx *get_shader() {
     return m_shader;

@@ -65,3 +65,5 @@ setup
 
 **/_cuobjdump*
 **/_app_cuda*
+**/*.ptx
+**/*.ptxas
