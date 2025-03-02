@@ -4648,7 +4648,7 @@ void simt_core_cluster::core_cycle() {
     dim3 t2(1, 1, 1); 
     kernel_info_t *k = new kernel_info_t(t1, t2, f, 10);
     if (k) m_core[1]->set_kernel(k);
-    m_core[1]->issue_block2core(*k);
+    m_core[1]->issue_block2core(*k); //Launch on 1st available thread/warp
     test = false; 
   }
 
