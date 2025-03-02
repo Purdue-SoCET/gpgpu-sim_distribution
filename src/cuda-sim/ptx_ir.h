@@ -1251,6 +1251,7 @@ class param_info {
 class function_info {
  public:
   function_info(int entry_point, gpgpu_context *ctx);
+
   const ptx_version &get_ptx_version() const {
     return m_symtab->get_ptx_version();
   }
@@ -1338,6 +1339,7 @@ class function_info {
     return NULL;
   }
   addr_t get_start_PC() const { return m_start_PC; }
+  void set_start_PC(addr_t pc) { m_start_PC = pc;  }
 
   void finalize(memory_space *param_mem);
   void param_to_shared(memory_space *shared_mem, symbol_table *symtab);

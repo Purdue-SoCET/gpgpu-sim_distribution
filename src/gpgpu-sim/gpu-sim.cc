@@ -1812,6 +1812,7 @@ unsigned exec_shader_core_ctx::sim_init_thread(
 void shader_core_ctx::issue_block2core(kernel_info_t &kernel) {
   // v3 addition
   // if (m_config->is_scalar_core_enabled & get_core_type() == SCALAR_CORE) {
+  //   // Don't try to launch kernel to core without being prompted by heuristic
   //   return; 
   // }
   // end v3 addition
@@ -1922,6 +1923,11 @@ void shader_core_ctx::issue_block2core(kernel_info_t &kernel) {
   m_n_active_cta++;
 
   shader_CTA_count_log(m_sid, 1);
+  printf("GPGPU-Sim Core %d uArch: cta:%2u, start_tid:%4u, end_tid:%4u, "
+                 "initialized @(%lld,%lld), kernel_uid:%u, kernel_name:%s\n", get_core_type(),
+                 free_cta_hw_id, start_thread, end_thread, m_gpu->gpu_sim_cycle,
+                 m_gpu->gpu_tot_sim_cycle, kernel.get_uid(),
+                 kernel.get_name().c_str());
   SHADER_DPRINTF(LIVENESS,
                  "GPGPU-Sim uArch: cta:%2u, start_tid:%4u, end_tid:%4u, "
                  "initialized @(%lld,%lld), kernel_uid:%u, kernel_name:%s\n",

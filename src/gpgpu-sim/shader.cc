@@ -1025,9 +1025,9 @@ void shader_core_ctx::fetch() {
           // mem_fetch *mf = m_mem_fetch_allocator->alloc()
           mem_access_t acc(INST_ACC_R, ppc, nbytes, false, m_gpu->gpgpu_ctx);
           mem_fetch *mf = new mem_fetch(
-              acc, NULL, m_warp[warp_id]->get_kernel_info()->get_streamID(),
-              READ_PACKET_SIZE, warp_id, m_sid, m_tpc, m_memory_config,
-              m_gpu->gpu_tot_sim_cycle + m_gpu->gpu_sim_cycle);
+                acc, NULL, m_warp[warp_id]->get_kernel_info()->get_streamID(),
+                READ_PACKET_SIZE, warp_id, m_sid, m_tpc, m_memory_config,
+                m_gpu->gpu_tot_sim_cycle + m_gpu->gpu_sim_cycle);
           std::list<cache_event> events;
           enum cache_request_status status;
           if (m_config->perfect_inst_const_cache) {
@@ -3734,11 +3734,11 @@ void shader_core_config::set_pipeline_latency() {
 
 void shader_core_ctx::cycle() {
   if (!isactive() && get_not_completed() == 0) {
-    if (get_core_type() == SCALAR_CORE) {
-      m_n_active_cta = 1; // Set to make scalar core cycle
-      m_warp[0]->set_next_pc(0x0b0);
-      printf("Not active Scalar PC: %llx\n", m_warp[0]->get_pc()); // figure out how to get fetch() to start fetching from a given PC
-    }
+    // if (get_core_type() == SCALAR_CORE) {
+    //   m_n_active_cta = 1; // Set to make scalar core cycle
+    //   m_warp[0]->set_next_pc(0x0b0);
+    //   printf("Not active Scalar PC: %llx\n", m_warp[0]->get_pc()); // figure out how to get fetch() to start fetching from a given PC
+    // }
     return;
   }
 
@@ -4563,11 +4563,13 @@ void exec_simt_core_cluster::create_shader_core_ctx() {
         m_scalar_config->warp_size = 8;
         m_scalar_config->max_warps_per_shader = 8;
         m_scalar_config->n_thread_per_shader = 8;  
-        m_scalar_config->gpgpu_registers_per_block = 8192; // Less total registers? Tried to keep same number of warp
-
+        m_scalar_config->gpgpu_registers_per_block = 8192; // 1024 regs per warp?
+        m_scalar_config->max_cta_per_core = 8; // Each warp is a CTA
+        
         m_core[i] = new exec_shader_core_ctx(m_gpu, this, sid, m_cluster_id,
                                             m_scalar_config, m_mem_config, m_stats, n_simt_cores);
         m_core[i]->set_core_type(SCALAR_CORE);  // Mark as scalar core
+
         printf("Created scalar core %u\n", i);
         m_core_sim_order.push_back(i);
     }
@@ -4596,9 +4598,25 @@ simt_core_cluster::simt_core_cluster(class gpgpu_sim *gpu, unsigned cluster_id,
   m_stats = stats;
   m_memory_stats = mstats;
   m_mem_config = mem_config;
+
+  test = true; 
 }
 
 void simt_core_cluster::core_cycle() {
+  // Able to get scalar core to start at a specific PC with this code
+  if (test) {
+    kernel_info_t *gpu_kernel = m_gpu->select_kernel();
+    function_info *f = new function_info(*(gpu_kernel->entry())); 
+    f->set_start_PC((addr_t) 0x1f8); 
+    dim3 t1(1, 1, 1);
+    dim3 t2(1, 1, 1); 
+    kernel_info_t *k = new kernel_info_t(t1, t2, f, 10); 
+    if (k) m_core[1]->set_kernel(k);
+    m_core[1]->issue_block2core(*k);
+    test = false; 
+  }
+
+
   for (std::list<unsigned>::iterator it = m_core_sim_order.begin();
        it != m_core_sim_order.end(); ++it) {
     m_core[*it]->cycle();
@@ -4694,6 +4712,9 @@ unsigned simt_core_cluster::issue_block2core() {
       break;
     }
   }
+
+ 
+
   return num_blocks_issued;
 }
 

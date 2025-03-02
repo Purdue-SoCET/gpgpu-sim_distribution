@@ -2467,6 +2467,7 @@ class shader_core_ctx : public core_t {
 
   // pure virtual methods implemented based on the current execution mode
   // (execution-driven vs trace-driven)
+
   virtual void init_warps(unsigned cta_id, unsigned start_thread,
                           unsigned end_thread, unsigned ctaid, int cta_size,
                           kernel_info_t &kernel);
@@ -2596,8 +2597,8 @@ class shader_core_ctx : public core_t {
     bool steal;
     bool reconverge;
     // return_fsm_states curr_state;
-    // return_fsm_states next_state; 
-
+    // return_fsm_states next_state;
+    
   protected:
     Scoreboard *m_fetched_register_board;
     std::queue<warp_inst_t> m_written_register_board; 
@@ -2622,7 +2623,7 @@ class exec_shader_core_ctx : public shader_core_ctx {
     } else {
         set_core_type(SCALAR_CORE);
     }
-    printf("TEST2:%d %d", get_core_type(), config->warp_size); 
+
     create_front_pipeline();
     create_shd_warp();
     create_schedulers();
@@ -2708,6 +2709,10 @@ class simt_core_cluster {
   unsigned m_cta_issue_next_core;
   std::list<unsigned> m_core_sim_order;
   std::list<mem_fetch *> m_response_fifo;
+
+  public:
+    // REMOVE LATER
+    bool test; 
 };
 
 class exec_simt_core_cluster : public simt_core_cluster {
