@@ -1031,7 +1031,7 @@ void ptx_instruction::set_opcode_and_latency() {
 
 void ptx_thread_info::ptx_fetch_inst(inst_t &inst) const {
   addr_t pc = get_pc();
-  const ptx_instruction *pI = m_func_info->get_instruction(pc);
+  const ptx_instruction *pI = m_func_info->get_instruction(pc, get_core()->get_core_type() == SCALAR_CORE);
   inst = (const inst_t &)*pI;
   assert(inst.valid());
 }
@@ -1796,7 +1796,7 @@ void ptx_thread_info::ptx_exec_inst(warp_inst_t &inst, unsigned lane_id) {
   addr_t pc = next_instr();
   assert(pc ==
          inst.pc);  // make sure timing model and functional model are in sync
-  const ptx_instruction *pI = m_func_info->get_instruction(pc);
+  const ptx_instruction *pI = m_func_info->get_instruction(pc, get_core()->get_core_type() == SCALAR_CORE);
 
   set_npc(pc + pI->inst_size());
 

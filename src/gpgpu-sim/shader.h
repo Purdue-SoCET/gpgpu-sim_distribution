@@ -88,8 +88,6 @@ enum exec_unit_type_t {
   SPECIALIZED = 7
 };
 
-enum CoreType { SIMT_CORE, SCALAR_CORE };
-
 class thread_ctx_t {
  public:
   unsigned m_cta_id;  // hardware CTA this thread belongs
@@ -1494,7 +1492,9 @@ enum pipeline_stage_name_t {
   EX_WB,
   ID_OC_TENSOR_CORE,
   OC_EX_TENSOR_CORE,
-  N_PIPELINE_STAGES
+  N_PIPELINE_STAGES,
+  ID_OC_REROUTE,
+  OC_OUT_REROUTE
 };
 
 const char *const pipeline_stage_name_decode[] = {
@@ -2073,10 +2073,6 @@ class shader_core_ctx : public core_t {
                   const shader_core_config *config,
                   const memory_config *mem_config, shader_core_stats *stats);
 
-  CoreType get_core_type() const { return m_core_type; }
-  void set_core_type(CoreType type) {
-      m_core_type = type;
-  }
   // used by simt_core_cluster:
   // modifiers
   void cycle();
@@ -2155,6 +2151,9 @@ class shader_core_ctx : public core_t {
   // debug:
   void display_simt_state(FILE *fout, int mask) const;
   void display_pipeline(FILE *fout, int print_mem, int mask3bit) const;
+
+  void display_operand_collector(FILE *fout) const; 
+
 
   void incload_stat() { m_stats->m_num_loadqueued_insn[m_sid]++; }
   void incstore_stat() { m_stats->m_num_storequeued_insn[m_sid]++; }
@@ -2583,7 +2582,6 @@ class shader_core_ctx : public core_t {
   int find_available_hwtid(unsigned int cta_size, bool occupy);
 
  private:
-  CoreType m_core_type;
   unsigned int m_occupied_n_threads;
   unsigned int m_occupied_shmem;
   unsigned int m_occupied_regs;

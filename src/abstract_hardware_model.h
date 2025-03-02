@@ -45,6 +45,8 @@ class gpgpu_context;
 #define MAX_INPUT_VALUES 24
 #define MAX_OUTPUT_VALUES 8
 
+enum CoreType { SIMT_CORE, SCALAR_CORE };
+
 enum _memory_space_t {
   undefined_space = 0,
   reg_space,
@@ -1365,6 +1367,11 @@ class core_t {
     return reduction_storage[ctaid][barid];
   }
 
+  CoreType get_core_type() const { return m_core_type; }
+  void set_core_type(CoreType type) {
+      m_core_type = type;
+  }
+
  protected:
   class gpgpu_sim *m_gpu;
   kernel_info_t *m_kernel;
@@ -1373,6 +1380,8 @@ class core_t {
   unsigned m_warp_size;
   unsigned m_warp_count;
   unsigned reduction_storage[MAX_CTA_PER_SHADER][MAX_BARRIERS_PER_CTA];
+
+  CoreType m_core_type;
 };
 
 // register that can hold multiple instructions.

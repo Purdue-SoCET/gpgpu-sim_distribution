@@ -300,7 +300,7 @@ void shader_core_ctx::create_schedulers() {
 
 void shader_core_ctx::create_exec_pipeline() {
   // op collector configuration
-  enum { SP_CUS, DP_CUS, SFU_CUS, TENSOR_CORE_CUS, INT_CUS, MEM_CUS, GEN_CUS };
+  enum { SP_CUS, DP_CUS, SFU_CUS, TENSOR_CORE_CUS, INT_CUS, MEM_CUS, GEN_CUS, REROUTE_CUS };
 
   opndcoll_rfu_t::port_vector_t in_ports;
   opndcoll_rfu_t::port_vector_t out_ports;
@@ -427,7 +427,16 @@ void shader_core_ctx::create_exec_pipeline() {
   }
 
   // v3 change to add collector unit
-
+  // if (m_config->is_scalar_core_enabled && get_core_type() == SCALAR_CORE) {
+  //   m_operand_collector.add_cu_set(REROUTE_CUS, 1, 1); // 1 reroute CU with 1 dispatch unit
+    
+  //   in_ports.push_back(&m_pipeline_reg[ID_OC_REROUTE]);
+  //   out_ports.push_back(&m_pipeline_reg[OC_OUT_REROUTE]);
+  //   cu_sets.push_back((unsigned)REROUTE_CUS);
+  //   cu_sets.push_back((unsigned)GEN_CUS);
+  //   m_operand_collector.add_port(in_ports, out_ports, cu_sets);
+  //   in_ports.clear(), out_ports.clear(), cu_sets.clear();
+  // }
   // v3 change ends
 
 
@@ -1774,6 +1783,7 @@ void swl_scheduler::order_warps() {
 void shader_core_ctx::read_operands() {
   for (unsigned int i = 0; i < m_config->reg_file_port_throughput; ++i)
     m_operand_collector.step();
+    // display_operand_collector(stdout); 
 }
 
 address_type coalesced_segment(address_type addr,
@@ -3491,6 +3501,19 @@ void ldst_unit::print(FILE *fout) const {
   }
 }
 
+// v3 addition
+void shader_core_ctx::display_operand_collector(FILE *fout) const {
+  fprintf(fout, "-------------------------- OP COL\n");
+  m_operand_collector.dump(fout);
+  fprintf(fout, "OC/EX (SP)  = ");
+  print_stage(OC_EX_SP, fout);
+  fprintf(fout, "OC/EX (SFU) = ");
+  print_stage(OC_EX_SFU, fout);
+  fprintf(fout, "OC/EX (MEM) = ");
+  print_stage(OC_EX_MEM, fout);
+}
+// end v3 addition
+
 void shader_core_ctx::display_pipeline(FILE *fout, int print_mem,
                                        int mask) const {
   fprintf(fout, "=================================================\n");
@@ -3535,6 +3558,8 @@ void shader_core_ctx::display_pipeline(FILE *fout, int print_mem,
   print_stage(OC_EX_SFU, fout);
   fprintf(fout, "OC/EX (MEM) = ");
   print_stage(OC_EX_MEM, fout);
+  fprintf(fout, "OC/OUT (REROUTE) = ");
+  print_stage(OC_OUT_REROUTE, fout); 
   
   fprintf(fout, "-------------------------- Pipe Regs\n");
 
@@ -3741,6 +3766,11 @@ void shader_core_ctx::cycle() {
     // }
     return;
   }
+
+  if (get_core_type() == SIMT_CORE) {
+    return; // temporarily only run scalar core
+  }
+
 
   m_stats->shader_cycles[m_sid]++;
 
@@ -4371,10 +4401,16 @@ void opndcoll_rfu_t::dispatch_ready_cu() {
 
 void opndcoll_rfu_t::allocate_cu(unsigned port_num) {
   input_port_t &inp = m_in_ports[port_num];
-  for (unsigned i = 0; i < inp.m_in.size(); i++) {
+
+  // v3 addition
+  unsigned start = 0; 
+
+  // end of v3 addition
+
+  for (unsigned i = start; i < inp.m_in.size(); i++) {
     if ((*inp.m_in[i]).has_ready()) {
       // find a free cu
-      for (unsigned j = 0; j < inp.m_cu_sets.size(); j++) {
+      for (unsigned j = start; j < inp.m_cu_sets.size(); j++) {
         std::vector<collector_unit_t> &cu_set = m_cus[inp.m_cu_sets[j]];
         bool allocated = false;
         unsigned cuLowerBound = 0;
@@ -4607,10 +4643,10 @@ void simt_core_cluster::core_cycle() {
   if (test) {
     kernel_info_t *gpu_kernel = m_gpu->select_kernel();
     function_info *f = new function_info(*(gpu_kernel->entry())); 
-    f->set_start_PC((addr_t) 0x1f8); 
+    f->set_start_PC((addr_t) 0x200); 
     dim3 t1(1, 1, 1);
     dim3 t2(1, 1, 1); 
-    kernel_info_t *k = new kernel_info_t(t1, t2, f, 10); 
+    kernel_info_t *k = new kernel_info_t(t1, t2, f, 10);
     if (k) m_core[1]->set_kernel(k);
     m_core[1]->issue_block2core(*k);
     test = false; 
