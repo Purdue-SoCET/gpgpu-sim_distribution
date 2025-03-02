@@ -75,7 +75,26 @@
 
 #define WRITE_MASK_SIZE 8
 
+// V3 Definitions
+#define SAT_LIMIT 10
+#define SCALAR_BANDWIDTH 8
+#define SCALAR_CORE_CAPACITY 16
+
 class gpgpu_context;
+
+typedef struct scalar_que_entry {
+  unsigned m_tid;
+  unsigned m_warp_id;
+  address_type start_pc;
+  address_type reconv_pc;
+} scalar_que_entry;
+
+typedef struct scalar_reg {
+  unsigned m_tid;
+  address_type start_pc;
+  address_type reconv_pc;
+  bool dirty;
+} scalar_reg;
 
 enum exec_unit_type_t {
   NONE = 0,
@@ -108,6 +127,8 @@ class shd_warp_t {
       : m_shader(shader), m_warp_size(warp_size) {
     m_stores_outstanding = 0;
     m_inst_in_pipeline = 0;
+    sat_counters.resize(warp_size);
+    scalar_regs.resize(SCALAR_BANDWIDTH);
     reset();
   }
   void reset() {
@@ -275,8 +296,40 @@ class shd_warp_t {
   unsigned get_dynamic_warp_id() const { return m_dynamic_warp_id; }
   unsigned get_warp_id() const { return m_warp_id; }
 
+  // V3 arch methods
+  unsigned count_active_threads(active_mask_t thread_mask);
+
+  void increment_sat_counters(active_mask_t result_thread_mask);
+
+  std::vector<unsigned> check_sat_counters();
+
+  void get_pcs(unsigned *rpc, unsigned *pc);
+
+  bool in_div_region();
+
+  unsigned set_scalar_regs(std::vector<unsigned> scalar_tids); // Sets the threads to be scalarized in the scalar registers if there is space, returns number of registers scalarized
+
+  void cycle_through_scalar_regs(); // Simulates cycle by cycle controller that iterates over scalar registers and pushes to the scalar que
+
+  bool all_on_scalar(active_mask_t simt_mask){
+    return (~scalar_mask & simt_mask).none(); //If simt mask & ~scalar mask is all 0s, that means all threads are on scalar core
+  }
+
+  bool all_on_simt(active_mask_t simt_mask){
+    return (scalar_mask & simt_mask).none(); //If simt mask & scalar mask is all 0s, that means all threads are on simt core
+  }
+
+  active_mask_t get_result_mask(active_mask_t simt_mask){
+    return ~scalar_mask & simt_mask;
+  }
+
+
   class shader_core_ctx *get_shader() {
     return m_shader;
+  }
+
+  ~shd_warp_t(){
+    fprintf(stdout, "Scalarized %d threads on warp %d\n",num_scalarizations,m_warp_id);
   }
 
  private:
@@ -318,6 +371,14 @@ class shd_warp_t {
   unsigned m_stores_outstanding;  // number of store requests sent but not yet
                                   // acknowledged
   unsigned m_inst_in_pipeline;
+
+  // V3 arch support
+  active_mask_t scalar_mask;
+  std::vector<unsigned> sat_counters;
+  std::vector<scalar_reg> scalar_regs;
+  unsigned reg_cntr;
+
+  unsigned num_scalarizations;
 
   // Jin: cdp support
  public:
@@ -2134,6 +2195,22 @@ class shader_core_ctx : public core_t {
   void set_max_cta(const kernel_info_t &kernel);
   void warp_inst_complete(const warp_inst_t &inst);
 
+
+  // V3 Arch methods 
+  void display_scalar_que();
+
+  bool push_scalar_que(unsigned tid, unsigned warp_id, address_type start_pc, address_type reconv_pc);
+
+  unsigned get_scalar_que_ocp(){
+    return scalar_que.size();
+  }
+
+  bool is_scalar_que_empty(){
+    return (bool) get_scalar_que_ocp();
+  }
+
+  scalar_que_entry pop_scalar_que();
+
   // accessors
   std::list<unsigned> get_regs_written(const inst_t &fvt) const;
   const shader_core_config *get_config() const { return m_config; }
@@ -2508,6 +2585,10 @@ class shader_core_ctx : public core_t {
   unsigned long long m_last_inst_gpu_sim_cycle;
   unsigned long long m_last_inst_gpu_tot_sim_cycle;
 
+  // V3 arch structure
+  std::deque<scalar_que_entry> scalar_que;
+
+
   // general information
   unsigned m_sid;  // shader id
   unsigned m_tpc;  // texture processor cluster id (aka, node id when using
@@ -2625,6 +2706,7 @@ class exec_shader_core_ctx : public shader_core_ctx {
     create_front_pipeline();
     create_shd_warp();
     create_schedulers();
+    // fprintf(stdout, "Number of Warps per shader core: %d\n", schedulers[0]->m_supervised_warps.size());
     create_exec_pipeline();
   }
 
