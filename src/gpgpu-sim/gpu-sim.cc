@@ -1809,14 +1809,7 @@ unsigned exec_shader_core_ctx::sim_init_thread(
                              num_threads, core, hw_cta_id, hw_warp_id, gpu);
 }
 
-void shader_core_ctx::issue_block2core(kernel_info_t &kernel) {
-  // v3 addition
-  // if (m_config->is_scalar_core_enabled & get_core_type() == SCALAR_CORE) {
-  //   // Don't try to launch kernel to core without being prompted by heuristic
-  //   return; 
-  // }
-  // end v3 addition
-
+void shader_core_ctx::issue_block2core(kernel_info_t &kernel, unsigned wid) {
   if (!m_config->gpgpu_concurrent_kernel_sm)
     set_max_cta(kernel);
   else
@@ -1838,6 +1831,11 @@ void shader_core_ctx::issue_block2core(kernel_info_t &kernel) {
       break;
     }
   }
+
+  if (m_config->is_scalar_core_enabled && m_core_type == SCALAR_CORE) {
+    free_cta_hw_id = wid; 
+  }
+
   assert(free_cta_hw_id != (unsigned)-1);
 
   // determine hardware threads and warps that will be used for this CTA
@@ -1853,16 +1851,22 @@ void shader_core_ctx::issue_block2core(kernel_info_t &kernel) {
 
   unsigned int start_thread, end_thread;
 
-  if (!m_config->gpgpu_concurrent_kernel_sm) {
-    start_thread = free_cta_hw_id * padded_cta_size;
-    end_thread = start_thread + cta_size;
+
+  if (m_config->is_scalar_core_enabled && m_core_type == SCALAR_CORE) {
+    start_thread = wid;
+    end_thread = wid + 1; 
   } else {
-    start_thread = find_available_hwtid(padded_cta_size, true);
-    assert((int)start_thread != -1);
-    end_thread = start_thread + cta_size;
-    assert(m_occupied_cta_to_hwtid.find(free_cta_hw_id) ==
-           m_occupied_cta_to_hwtid.end());
-    m_occupied_cta_to_hwtid[free_cta_hw_id] = start_thread;
+    if (!m_config->gpgpu_concurrent_kernel_sm) {
+      start_thread = free_cta_hw_id * padded_cta_size;
+      end_thread = start_thread + cta_size;
+    } else {
+      start_thread = find_available_hwtid(padded_cta_size, true);
+      assert((int)start_thread != -1);
+      end_thread = start_thread + cta_size;
+      assert(m_occupied_cta_to_hwtid.find(free_cta_hw_id) ==
+            m_occupied_cta_to_hwtid.end());
+      m_occupied_cta_to_hwtid[free_cta_hw_id] = start_thread;
+    }
   }
 
   // reset the microarchitecture state of the selected hardware thread and warp

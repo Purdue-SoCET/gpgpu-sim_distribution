@@ -2139,7 +2139,7 @@ class shader_core_ctx : public core_t {
   void cycle();
   void reinit(unsigned start_thread, unsigned end_thread,
               bool reset_not_completed);
-  void issue_block2core(class kernel_info_t &kernel);
+  void issue_block2core(class kernel_info_t &kernel, unsigned wid = (unsigned) -1);
 
   void cache_flush();
   void cache_invalidate();
@@ -2202,7 +2202,7 @@ class shader_core_ctx : public core_t {
   bool push_scalar_que(unsigned tid, unsigned warp_id, address_type start_pc, address_type reconv_pc);
 
   unsigned get_scalar_que_ocp(){
-    return scalar_que.size();
+    return scalar_que->size();
   }
 
   bool is_scalar_que_empty(){
@@ -2210,6 +2210,10 @@ class shader_core_ctx : public core_t {
   }
 
   scalar_que_entry pop_scalar_que();
+
+  void set_scalar_que(std::deque<scalar_que_entry> *sq) {
+    scalar_que = sq; 
+  }
 
   // accessors
   std::list<unsigned> get_regs_written(const inst_t &fvt) const;
@@ -2586,7 +2590,7 @@ class shader_core_ctx : public core_t {
   unsigned long long m_last_inst_gpu_tot_sim_cycle;
 
   // V3 arch structure
-  std::deque<scalar_que_entry> scalar_que;
+  std::deque<scalar_que_entry> *scalar_que;
 
 
   // general information
@@ -2777,6 +2781,10 @@ class simt_core_cluster {
                               unsigned long long &total) const;
   virtual void create_shader_core_ctx() = 0;
 
+  shader_core_ctx **get_core() {
+    return m_core; 
+  }
+
  protected:
   unsigned m_cluster_id;
   gpgpu_sim *m_gpu;
@@ -2790,9 +2798,15 @@ class simt_core_cluster {
   std::list<unsigned> m_core_sim_order;
   std::list<mem_fetch *> m_response_fifo;
 
+  std::vector<std::deque<scalar_que_entry>> scalar_ques; 
+
   public:
     // REMOVE LATER
     bool test; 
+
+    std::deque<scalar_que_entry>& get_que(unsigned core_id) {
+      return scalar_ques.at(core_id); 
+    }
 };
 
 class exec_simt_core_cluster : public simt_core_cluster {
