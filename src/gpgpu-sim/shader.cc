@@ -966,44 +966,44 @@ void shader_core_ctx::decode() {
     }
     m_inst_fetch_buffer.m_valid = false;
 
-    if (m_config->is_scalar_core_enabled && get_core_type() == SCALAR_CORE) {
-      if ((pc == (address_type) 0x1d0) && !m_warp[m_inst_fetch_buffer.m_warp_id]->functional_done()) { // should be value provided by heuristic
-        printf("Warp %u ran to reconvergence point and is ready to reconverge at 0x%llx\n", m_inst_fetch_buffer.m_warp_id, pc);
-        m_warp[m_inst_fetch_buffer.m_warp_id]->set_completed(0); 
-        m_warp[m_inst_fetch_buffer.m_warp_id]->ibuffer_flush();
-        // m_warp[m_inst_fetch_buffer.m_warp_id]->set_done_exit();
-        m_thread[m_inst_fetch_buffer.m_warp_id]->set_done(); 
-        m_warp[m_inst_fetch_buffer.m_warp_id]->print(stdout); 
+  //   if (m_config->is_scalar_core_enabled && get_core_type() == SCALAR_CORE) {
+  //     if ((pc == (address_type) 0x1d0) && !m_warp[m_inst_fetch_buffer.m_warp_id]->functional_done()) { // should be value provided by heuristic
+  //       printf("Warp %u ran to reconvergence point and is ready to reconverge at 0x%llx\n", m_inst_fetch_buffer.m_warp_id, pc);
+  //       m_warp[m_inst_fetch_buffer.m_warp_id]->set_completed(0); 
+  //       m_warp[m_inst_fetch_buffer.m_warp_id]->ibuffer_flush();
+  //       // m_warp[m_inst_fetch_buffer.m_warp_id]->set_done_exit();
+  //       m_thread[m_inst_fetch_buffer.m_warp_id]->set_done(); 
+  //       m_warp[m_inst_fetch_buffer.m_warp_id]->print(stdout); 
 
-        printf("Core %u reclaiming warp %u\n", get_core_type(), m_inst_fetch_buffer.m_warp_id); 
-        bool did_exit = false;
-        for (unsigned t = 0; t < m_config->warp_size; t++) {
-          unsigned tid = m_inst_fetch_buffer.m_warp_id * m_config->warp_size + t;
-          if (m_threadState[tid].m_active == true) {
-            m_threadState[tid].m_active = false;
-            unsigned cta_id = m_warp[m_inst_fetch_buffer.m_warp_id]->get_cta_id();
-            if (m_thread[tid] == NULL) {
-              register_cta_thread_exit(cta_id,
-                                        m_warp[m_inst_fetch_buffer.m_warp_id]->get_kernel_info());
-            } else {
-              register_cta_thread_exit(cta_id,
-                                        &(m_thread[tid]->get_kernel()));
-            }
-            m_not_completed -= 1;
-            m_active_threads.reset(tid);
-            did_exit = true;
-          }
-        }
-        if (did_exit) m_warp[m_inst_fetch_buffer.m_warp_id]->set_done_exit();
-        --m_active_warps;
-        assert(m_active_warps >= 0);
+  //       printf("Core %u reclaiming warp %u\n", get_core_type(), m_inst_fetch_buffer.m_warp_id); 
+  //       bool did_exit = false;
+  //       for (unsigned t = 0; t < m_config->warp_size; t++) {
+  //         unsigned tid = m_inst_fetch_buffer.m_warp_id * m_config->warp_size + t;
+  //         if (m_threadState[tid].m_active == true) {
+  //           m_threadState[tid].m_active = false;
+  //           unsigned cta_id = m_warp[m_inst_fetch_buffer.m_warp_id]->get_cta_id();
+  //           if (m_thread[tid] == NULL) {
+  //             register_cta_thread_exit(cta_id,
+  //                                       m_warp[m_inst_fetch_buffer.m_warp_id]->get_kernel_info());
+  //           } else {
+  //             register_cta_thread_exit(cta_id,
+  //                                       &(m_thread[tid]->get_kernel()));
+  //           }
+  //           m_not_completed -= 1;
+  //           m_active_threads.reset(tid);
+  //           did_exit = true;
+  //         }
+  //       }
+  //       if (did_exit) m_warp[m_inst_fetch_buffer.m_warp_id]->set_done_exit();
+  //       --m_active_warps;
+  //       assert(m_active_warps >= 0);
 
-        reconverge = true; 
-        return;  
-      }
+  //       reconverge = true; 
+  //       return;  
+  //     }
+  //   }
     }
   }
-}
 
 void shader_core_ctx::fetch() {
   if (!m_inst_fetch_buffer.m_valid) {
@@ -1030,9 +1030,9 @@ void shader_core_ctx::fetch() {
 
         // this code checks if this warp has finished executing and can be
         // reclaimed
-        if (m_warp[warp_id]->hardware_done() &&
+        if ((m_warp[warp_id]->hardware_done() &&
             !m_scoreboard->pendingWrites(warp_id) &&
-            !m_warp[warp_id]->done_exit()) {
+            !m_warp[warp_id]->done_exit())) {
           printf("Core %u reclaiming warp %u\n", get_core_type(), warp_id); 
           bool did_exit = false;
           for (unsigned t = 0; t < m_config->warp_size; t++) {
