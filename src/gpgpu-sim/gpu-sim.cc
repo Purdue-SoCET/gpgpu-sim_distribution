@@ -1825,9 +1825,12 @@ void shader_core_ctx::issue_block2core(kernel_info_t &kernel) {
     }
   }
   assert(free_cta_hw_id != (unsigned)-1);
+  
+  kernel.set_core_type(m_core_type);
 
   // determine hardware threads and warps that will be used for this CTA
-  int cta_size = kernel.threads_per_cta();
+  // int cta_size = kernel.threads_per_cta();
+  int cta_size = (m_core_type == SCALAR_CORE) ? 1 : kernel.threads_per_cta();
 
   // hw warp id = hw thread id mod warp size, so we need to find a range
   // of hardware thread ids corresponding to an integral number of hardware
@@ -1839,6 +1842,7 @@ void shader_core_ctx::issue_block2core(kernel_info_t &kernel) {
 
   unsigned int start_thread, end_thread;
 
+   // assume disabled for now
   if (!m_config->gpgpu_concurrent_kernel_sm) {
     start_thread = free_cta_hw_id * padded_cta_size;
     end_thread = start_thread + cta_size;
