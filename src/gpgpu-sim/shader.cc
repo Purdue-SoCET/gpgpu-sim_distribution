@@ -938,6 +938,7 @@ void shader_core_ctx::decode() {
     // decode 1 or 2 instructions and place them into ibuffer
     address_type pc = m_inst_fetch_buffer.m_pc;
     const warp_inst_t *pI1 = get_next_inst(m_inst_fetch_buffer.m_warp_id, pc);
+
     m_warp[m_inst_fetch_buffer.m_warp_id]->ibuffer_fill(0, pI1);
     m_warp[m_inst_fetch_buffer.m_warp_id]->inc_inst_in_pipeline();
     if (pI1) {
@@ -1031,20 +1032,15 @@ void shader_core_ctx::fetch() {
         // this code checks if this warp has finished executing and can be
         // reclaimed
 
-        // If warp reached reconvergence point, stop fetching new instrs and release warp
-        // Note: Does NOT execute instr at reconvergence pt
-        if (m_config->is_scalar_core_enabled && m_core_type == SCALAR_CORE) {
-          if (m_warp[warp_id]->get_pc() == (address_type) 0x58) {
-            printf("Try to stop warp %u since it is ad pc=0x%x\n", warp_id, m_warp[warp_id]->get_pc()); 
-            // m_thread[warp_id]->set_done(); // Thread is finished
-            // m_warp[warp_id]->set_completed(warp_id); // Warp is finished
-          }
-        }
-
         if ((m_warp[warp_id]->hardware_done() &&
             !m_scoreboard->pendingWrites(warp_id) &&
             !m_warp[warp_id]->done_exit())) {
           printf("Core %u reclaiming warp %u\n", get_core_type(), warp_id); 
+
+          if (m_config->is_scalar_core_enabled && m_core_type == SCALAR_CORE) {
+            div_tid_table->reset_entry(warp_id); 
+          }
+
           bool did_exit = false;
           for (unsigned t = 0; t < m_config->warp_size; t++) {
             unsigned tid = warp_id * m_config->warp_size + t;
@@ -1151,6 +1147,7 @@ void shader_core_ctx::issue_warp(register_set &pipe_reg_set,
   }
 
   if (m_config->is_scalar_core_enabled && get_core_type() == SCALAR_CORE) {
+
     // Modified instr has src registers become dest registers so checkCollision will flag properly
     warp_inst_t frb_entry = *next_inst; 
     for (unsigned i = 0; i < MAX_REG_OPERANDS; i++) {
@@ -1256,6 +1253,23 @@ void shader_core_ctx::issue_warp(register_set &pipe_reg_set,
 }
 
 void shader_core_ctx::issue() {
+    // v3 addition
+    if (m_config->is_scalar_core_enabled && get_core_type() == SCALAR_CORE) {
+      for (int warp_id = 0; warp_id < m_config->max_warps_per_shader; warp_id++) {
+        if (m_warp[warp_id]->get_pc() == (address_type) 0x68 && !m_warp[warp_id]->functional_done()) {
+          printf("Try to stop warp %u since it is at pc=0x%x\n",warp_id, m_warp[warp_id]->get_pc()); 
+          m_warp[warp_id]->set_completed(warp_id); // Warp is functionally finished
+          m_thread[warp_id]->set_done(); // Thread is finished
+          // m_warp[warp_id]->dec_inst_in_pipeline(); // Doesn't count as in pipeline bc not executed
+          m_warp[warp_id]->ibuffer_flush(); 
+          warp_exit(warp_id); 
+          // return; // don't try to execute the instruction on the RPC
+        }
+      }
+    }
+    // end of v3 addition
+
+
   // Ensure fair round robin issu between schedulers
   unsigned j;
   for (unsigned i = 0; i < schedulers.size(); i++) {
@@ -1417,7 +1431,7 @@ void scheduler_unit::cycle() {
                                                  // dual issue to diff execution
                                                  // units (as in Maxwell and
                                                  // Pascal)
-
+    
     if (warp(warp_id).ibuffer_empty())
       SCHED_DPRINTF(
           "Warp (warp_id %u, dynamic_warp_id %u) fails as ibuffer_empty\n",
@@ -3130,7 +3144,11 @@ void shader_core_ctx::register_cta_thread_exit(unsigned cta_num,
   if (!m_cta_status[cta_num]) {
     // Increment the completed CTAs
     m_stats->ctas_completed++;
-    m_gpu->inc_completed_cta();
+
+    if (get_core_type() == SIMT_CORE) {
+      m_gpu->inc_completed_cta();
+    }
+
     m_n_active_cta--;
     m_barriers.deallocate_barrier(cta_num);
     shader_CTA_count_unlog(m_sid, 1);
@@ -3831,24 +3849,28 @@ void shader_core_config::set_pipeline_latency() {
 void shader_core_ctx::cycle() {
   // Scalar coure will start up warps if entries are on scalar_que (1 per cycle) 
   if (m_config->is_scalar_core_enabled && get_core_type() == SCALAR_CORE) {
+  m_warp[0]->print(stdout); 
     if (scalar_que->front().m_tid == 4) { // For now only pop 1 entry
-      scalar_que_entry entry = pop_scalar_que(); 
+    // if (!scalar_que->empty()) {
+      int free_entry_id = div_tid_table->find_free_entry(); // Make sure scalar core has space to assign first
+      if (free_entry_id != -1) {
+        scalar_que_entry entry = pop_scalar_que(); 
+        div_tid_table->set_entry(free_entry_id, entry.m_tid, entry.m_warp_id); 
 
-      kernel_info_t *simt_kernel = m_cluster->get_core()[get_sid() - m_config->n_simt_clusters]->get_kernel(); 
+        kernel_info_t *simt_kernel = m_cluster->get_core()[get_sid() - m_config->n_simt_clusters]->get_kernel(); // Use the same kernel simt core
 
-      function_info *f = new function_info(*(simt_kernel->entry())); 
-      f->set_start_PC((addr_t) entry.start_pc); 
-      dim3 t1(1, 1, 1);
-      dim3 t2(1, 1, 1); 
+        function_info *f = new function_info(*(simt_kernel->entry())); // Copy the kernel/code, but change the PC
+        f->set_start_PC((addr_t) entry.start_pc); 
+        dim3 t1(1, 1, 1); // Since borrowing kernel code to execute, change it to be for 1 thread
+        dim3 t2(1, 1, 1); 
 
-      printf("Popped tid=%u, wid=%u from scalar que and assigning to warp %u\n", entry.m_tid, entry.m_warp_id, entry.m_tid); 
+        printf("Popped tid=%u, wid=%u from scalar que and assigning to warp %u\n", entry.m_tid, entry.m_warp_id, free_entry_id); 
 
-      kernel_info_t *k = new kernel_info_t(t1, t2, f, simt_kernel->get_streamID());
-      if (k) set_kernel(k);
+        kernel_info_t *k = new kernel_info_t(t1, t2, f, simt_kernel->get_streamID());
+        if (k) set_kernel(k);
 
-      issue_block2core(*k, entry.m_tid); //Launch on 1st available thread/warp
-
-      // Make note on divergence thread ID table
+        issue_block2core(*k, free_entry_id); //Launch the code
+      }
     }
   }
 
@@ -4695,10 +4717,17 @@ void exec_simt_core_cluster::create_shader_core_ctx() {
     }
 
     // Create structures between SIMT and scalar cores and connect
+    for (auto &table : divergent_tid_tables) {
+      table.resize(8); // Divergent TID table has 8 spots for 8 threads on scalar core
+    }
     for (unsigned i = 0; i < n_simt_cores; i++) {
         m_core[i]->set_scalar_que(&get_que(i)); 
         m_core[i + n_simt_cores]->set_scalar_que(&get_que(i)); 
         printf("Connected scalar que to Core %u and Core %u\n", i, i + n_simt_cores);
+
+        m_core[i]->set_div_tid_table(&get_div_tid_table(i)); 
+        m_core[i + n_simt_cores]->set_div_tid_table(&get_div_tid_table(i)); 
+        printf("Connected divergent TID table to Core %u and Core %u\n", i, i + n_simt_cores);
     }
 
   } // end of v3 addition
@@ -4730,6 +4759,8 @@ simt_core_cluster::simt_core_cluster(class gpgpu_sim *gpu, unsigned cluster_id,
   m_mem_config = mem_config;
 
   scalar_ques.resize(m_config->n_simt_cores_per_cluster / 2); 
+  divergent_tid_tables.resize(m_config->n_simt_cores_per_cluster / 2); 
+
 }
 
 void simt_core_cluster::core_cycle() {

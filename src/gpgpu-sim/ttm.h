@@ -16,20 +16,21 @@
 
 //#include "../cuda-sim/ptx.tab.h"
 
-#include "../abstract_hardware_model.h"
-#include "shader.h"
-#include "delayqueue.h"
-#include "dram.h"
-#include "gpu-cache.h"
-#include "mem_fetch.h"
-#include "scoreboard.h"
-#include "stack.h"
-#include "stats.h"
-#include "traffic_breakdown.h"
+// #include "../abstract_hardware_model.h"
+// #include "shader.h"
+// #include "delayqueue.h"
+// #include "dram.h"
+// #include "gpu-cache.h"
+// #include "mem_fetch.h"
+// #include "scoreboard.h"
+// #include "stack.h"
+// #include "stats.h"
+// #include "traffic_breakdown.h"
 #include <queue>
 #include <vector>
 
 typedef struct div_tid_table_entry {
+    bool valid; 
     unsigned scalar_tid; 
     unsigned simt_tid;
     unsigned simt_wid; 
@@ -49,10 +50,34 @@ typedef struct wrb_entry {
 } wrb_entry;
 
 class divergent_tid_table {
-    public:
+    private:
     std::vector<div_tid_table_entry> divergent_tid_table_arr;
+    int num_entries; 
 
-    divergent_tid_table(int n) : divergent_tid_table_arr(n) {} // Instantiate this when cores getting instantiated based on number of warps in scalar core
+    public:
+    // Default constructor - starts empty
+    divergent_tid_table() : num_entries(0) {}
+
+    // Constructor that sets size immediately
+    divergent_tid_table(int n) {
+        resize(n); 
+    }
+
+    void resize(int n) {
+        num_entries = n; 
+        divergent_tid_table_arr.resize(n); 
+        for (int i = 0; i < n; i++) {
+            divergent_tid_table_arr[i].valid = false; 
+            divergent_tid_table_arr[i].scalar_tid = -1; 
+            divergent_tid_table_arr[i].simt_tid = -1; 
+            divergent_tid_table_arr[i].simt_wid = -1; 
+
+        }
+    } 
+    void reset_entry(unsigned warp_id);
+    void set_entry(unsigned scalar_tid, unsigned simt_tid, unsigned simt_wid); 
+    div_tid_table_entry get_entry(unsigned scalar_tid);
+    int find_free_entry(); 
 };
 
 

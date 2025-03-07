@@ -2215,6 +2215,10 @@ class shader_core_ctx : public core_t {
     scalar_que = sq; 
   }
 
+  void set_div_tid_table(divergent_tid_table *tb) {
+    div_tid_table = tb; 
+  }
+
   // accessors
   std::list<unsigned> get_regs_written(const inst_t &fvt) const;
   const shader_core_config *get_config() const { return m_config; }
@@ -2591,6 +2595,7 @@ class shader_core_ctx : public core_t {
 
   // V3 arch structure
   std::deque<scalar_que_entry> *scalar_que;
+  divergent_tid_table *div_tid_table; 
 
 
   // general information
@@ -2798,7 +2803,8 @@ class simt_core_cluster {
   std::list<unsigned> m_core_sim_order;
   std::list<mem_fetch *> m_response_fifo;
 
-  std::vector<std::deque<scalar_que_entry>> scalar_ques; 
+  std::vector<std::deque<scalar_que_entry>> scalar_ques;
+  std::vector<divergent_tid_table> divergent_tid_tables; 
 
   public:
     // REMOVE LATER
@@ -2806,6 +2812,10 @@ class simt_core_cluster {
 
     std::deque<scalar_que_entry>& get_que(unsigned core_id) {
       return scalar_ques.at(core_id); 
+    }
+
+    divergent_tid_table& get_div_tid_table(unsigned core_id) {
+      return divergent_tid_tables.at(core_id); 
     }
 };
 
