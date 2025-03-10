@@ -46,6 +46,7 @@
 #include <utility>
 #include <vector>
 #include <queue>
+#include <unordered_set>
 
 //#include "../cuda-sim/ptx.tab.h"
 
@@ -78,6 +79,8 @@
 #define SAT_LIMIT 10
 #define SCALAR_BANDWIDTH 8
 #define SCALAR_CORE_CAPACITY 16
+#define RECONVERGE_RETURN_PC ((address_type)-2)
+#define NO_BRANCH_DIVERGENCE ((address_type)-1)
 
 class gpgpu_context;
 
@@ -252,6 +255,18 @@ class shd_warp_t {
       m_ibuffer[i].m_valid = false;
     }
   }
+
+  std::unordered_set<address_type> get_conv_points() {
+    for (unsigned i = 0; i < IBUFFER_SIZE; i++) {
+      const warp_inst_t * temp_inst = m_ibuffer[i].m_inst;
+      if (temp_inst == NULL) continue;
+      address_type temp_pc = temp_inst->reconvergence_pc;
+      if (temp_pc != RECONVERGE_RETURN_PC && temp_pc != NO_BRANCH_DIVERGENCE) {
+        m_conv_points.insert(temp_pc);
+      }
+    }
+    return m_conv_points;
+  }
   const warp_inst_t *ibuffer_next_inst() { return m_ibuffer[m_next].m_inst; }
   bool ibuffer_next_valid() { return m_ibuffer[m_next].m_valid; }
   void ibuffer_free() {
@@ -349,6 +364,7 @@ class shd_warp_t {
   unsigned m_dynamic_warp_id;
 
   address_type m_next_pc;
+  std::unordered_set<address_type> m_conv_points;
   unsigned n_completed;  // number of threads in warp completed
   std::bitset<MAX_WARP_SIZE> m_active_threads;
 
