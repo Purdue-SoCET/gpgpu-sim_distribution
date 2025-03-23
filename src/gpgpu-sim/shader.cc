@@ -5030,7 +5030,7 @@ void shd_warp_t::get_pcs(unsigned *rpc, unsigned *pc){
 
 bool shd_warp_t::in_div_region(){
   unsigned pc, rpc;
-  get_pcs(&pc, &rpc);
+  get_pcs(&rpc,&pc);
   return rpc != -1;
 }
 
