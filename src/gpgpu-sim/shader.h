@@ -46,6 +46,7 @@
 #include <utility>
 #include <vector>
 #include <queue>
+#include <unordered_set>
 
 //#include "../cuda-sim/ptx.tab.h"
 
@@ -79,6 +80,8 @@
 #define SAT_LIMIT 10
 #define SCALAR_BANDWIDTH 8
 #define SCALAR_CORE_CAPACITY 16
+#define RECONVERGE_RETURN_PC ((address_type)-2)
+#define NO_BRANCH_DIVERGENCE ((address_type)-1)
 
 class gpgpu_context;
 
@@ -253,6 +256,18 @@ class shd_warp_t {
       m_ibuffer[i].m_valid = false;
     }
   }
+
+  std::unordered_set<address_type> get_conv_points() {
+    for (unsigned i = 0; i < IBUFFER_SIZE; i++) {
+      const warp_inst_t * temp_inst = m_ibuffer[i].m_inst;
+      if (temp_inst == NULL) continue;
+      address_type temp_pc = temp_inst->reconvergence_pc;
+      if (temp_pc != RECONVERGE_RETURN_PC && temp_pc != NO_BRANCH_DIVERGENCE) {
+        m_conv_points.insert(temp_pc);
+      }
+    }
+    return m_conv_points;
+  }
   const warp_inst_t *ibuffer_next_inst() { return m_ibuffer[m_next].m_inst; }
   bool ibuffer_next_valid() { return m_ibuffer[m_next].m_valid; }
   void ibuffer_free() {
@@ -315,12 +330,20 @@ class shd_warp_t {
     return (~scalar_mask & simt_mask).none(); //If simt mask & ~scalar mask is all 0s, that means all threads are on scalar core
   }
 
+  bool at_least_one_on_scalar(active_mask_t simt_mask){
+    return (scalar_mask & simt_mask).any();
+  }
+
   bool all_on_simt(active_mask_t simt_mask){
     return (scalar_mask & simt_mask).none(); //If simt mask & scalar mask is all 0s, that means all threads are on simt core
   }
 
   active_mask_t get_result_mask(active_mask_t simt_mask){
     return ~scalar_mask & simt_mask;
+  }
+
+  active_mask_t get_scalar_mask() {
+    return scalar_mask;
   }
 
 
@@ -342,6 +365,7 @@ class shd_warp_t {
   unsigned m_dynamic_warp_id;
 
   address_type m_next_pc;
+  std::unordered_set<address_type> m_conv_points;
   unsigned n_completed;  // number of threads in warp completed
   std::bitset<MAX_WARP_SIZE> m_active_threads;
 
@@ -2134,6 +2158,10 @@ class shader_core_ctx : public core_t {
                   const shader_core_config *config,
                   const memory_config *mem_config, shader_core_stats *stats);
 
+  CoreType get_core_type() const { return m_core_type; }
+  void set_core_type(CoreType type) {
+      m_core_type = type;
+  }
   // used by simt_core_cluster:
   // modifiers
   void cycle();
@@ -2672,6 +2700,7 @@ class shader_core_ctx : public core_t {
   int find_available_hwtid(unsigned int cta_size, bool occupy);
 
  private:
+  CoreType m_core_type;
   unsigned int m_occupied_n_threads;
   unsigned int m_occupied_shmem;
   unsigned int m_occupied_regs;
@@ -2706,6 +2735,13 @@ class exec_shader_core_ctx : public shader_core_ctx {
                        shader_core_stats *stats, unsigned n_simt_cores)
       : shader_core_ctx(gpu, cluster, shader_id, tpc_id, config, mem_config,
                         stats) {
+    if (shader_id < n_simt_cores) {
+        printf("SIMT_CORE with shader_id=%d\n", shader_id);
+        set_core_type(SIMT_CORE);
+    } else {
+        printf("SCALAR_CORE with shader_id=%d\n", shader_id);
+        set_core_type(SCALAR_CORE);
+    }
     if (shader_id < n_simt_cores) {
         set_core_type(SIMT_CORE);
     } else {

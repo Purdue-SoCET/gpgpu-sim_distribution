@@ -1457,6 +1457,7 @@ void scheduler_unit::cycle() {
       }
 
       bool valid = warp(warp_id).ibuffer_next_valid();
+      std::unordered_set<address_type> conv_points = warp(warp_id).get_conv_points();
       bool warp_inst_issued = false;
       unsigned pc, rpc;
       m_shader->get_pdom_stack_top_info(warp_id, pI, &pc, &rpc);
@@ -1487,11 +1488,15 @@ void scheduler_unit::cycle() {
                 m_shader->get_active_mask(warp_id, pI);
 
             assert(warp(warp_id).inst_in_pipeline());
+            
+            bool reached_conv = false;
+            if (conv_points.find(pc) != conv_points.end()) reached_conv = true;
 
-            if ((pI->op == LOAD_OP) || (pI->op == STORE_OP) ||
+            if (!(reached_conv && warp(warp_id).at_least_one_on_scalar(active_mask)) && 
+                ((pI->op == LOAD_OP) || (pI->op == STORE_OP) ||
                 (pI->op == MEMORY_BARRIER_OP) ||
                 (pI->op == TENSOR_CORE_LOAD_OP) ||
-                (pI->op == TENSOR_CORE_STORE_OP)) {
+                (pI->op == TENSOR_CORE_STORE_OP))) {
               if (m_mem_out->has_free(m_shader->m_config->sub_core_model,
                                       m_id) &&
                   (!diff_exec_units ||
@@ -5254,7 +5259,7 @@ void shd_warp_t::get_pcs(unsigned *rpc, unsigned *pc){
 
 bool shd_warp_t::in_div_region(){
   unsigned pc, rpc;
-  get_pcs(&pc, &rpc);
+  get_pcs(&rpc,&pc);
   return rpc != -1;
 }
 

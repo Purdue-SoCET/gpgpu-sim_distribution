@@ -1,9 +1,9 @@
-self exe links to: /home/asicfab/a/halalawi/gpgpu-sim_distribution/test/mmul/mmul
-self exe links to: /home/asicfab/a/halalawi/gpgpu-sim_distribution/test/mmul/mmul
+self exe links to: /home/asicfab/a/vphamkha/gpgpu-sim_distribution/test/mmul/mmul
+self exe links to: /home/asicfab/a/vphamkha/gpgpu-sim_distribution/test/mmul/mmul
 11.0
 
 
-        *** GPGPU-Sim Simulator Version 4.2.0  [build gpgpu-sim_git-commit-bf25477_modified_2.0] ***
+        *** GPGPU-Sim Simulator Version 4.2.0  [build gpgpu-sim_git-commit-db99ef4_modified_7.0] ***
 
 
 GPGPU-Sim PTX: simulation mode 0 (can change with PTX_SIM_MODE_FUNC environment variable:
@@ -239,7 +239,7 @@ GPGPU-Sim: Configuration options:
 DRAM Timing Options:
 nbk                                    16 # number of banks
 CCD                                     1 # column to column delay
-RRD                              d5a0150f8696cec0d34c6ff875467467  /home/asicfab/a/halalawi/gpgpu-sim_distribution/test/mmul/mmul
+RRD                              d0f981b0a0446601bba454cf7da0baab  /home/asicfab/a/vphamkha/gpgpu-sim_distribution/test/mmul/mmul
 Extracting PTX file and ptxas options    1: mmul.1.sm_52.ptx -arch=sm_52
        3 # minimal delay between activation of rows in different banks
 RCD                                    12 # row to column delay
@@ -266,11 +266,11 @@ GPGPU-Sim uArch: clock periods: 0.00000000083333333333:0.00000000083333333333:0.
 GPGPU-Sim uArch: performance model initialization complete.
 Number of shader cores being initialized: 1
 GPGPU-Sim PTX: __cudaRegisterFatBinary, fat_cubin_handle = 1, filename=default
-self exe links to: /home/asicfab/a/halalawi/gpgpu-sim_distribution/test/mmul/mmul
-Running md5sum using "md5sum /home/asicfab/a/halalawi/gpgpu-sim_distribution/test/mmul/mmul "
-self exe links to: /home/asicfab/a/halalawi/gpgpu-sim_distribution/test/mmul/mmul
+self exe links to: /home/asicfab/a/vphamkha/gpgpu-sim_distribution/test/mmul/mmul
+Running md5sum using "md5sum /home/asicfab/a/vphamkha/gpgpu-sim_distribution/test/mmul/mmul "
+self exe links to: /home/asicfab/a/vphamkha/gpgpu-sim_distribution/test/mmul/mmul
 Extracting specific PTX file named mmul.1.sm_52.ptx 
-GPGPU-Sim PTX: __cudaRegisterFunction _Z9matrixMulPKiS0_Pii : hostFun 0x0x561b85708b50, fat_cubin_handle = 1
+GPGPU-Sim PTX: __cudaRegisterFunction _Z9matrixMulPKiS0_Pii : hostFun 0x0x55fdc767cb50, fat_cubin_handle = 1
 GPGPU-Sim PTX: Parsing mmul.1.sm_52.ptx
 GPGPU-Sim PTX: Warning -- ignoring pragma 'nounroll'
 GPGPU-Sim PTX: instruction assembly for function '_Z9matrixMulPKiS0_Pii'...   done.
@@ -280,12 +280,12 @@ GPGPU-Sim PTX: finished loading globals (0 bytes total).
 GPGPU-Sim PTX: loading constants with explicit initializers...  done.
 GPGPU-Sim PTX: Loading PTXInfo from mmul.1.sm_52.ptx
 GPGPU-Sim PTX: Kernel '_Z9matrixMulPKiS0_Pii' : regs=23, lmem=0, smem=0, cmem=348
-GPGPU-Sim PTX: Setting up arguments for 8 bytes starting at 0x7fffd7d545e8..
-GPGPU-Sim PTX: Setting up arguments for 8 bytes starting at 0x7fffd7d545e0..
-GPGPU-Sim PTX: Setting up arguments for 8 bytes starting at 0x7fffd7d545d8..
-GPGPU-Sim PTX: Setting up arguments for 4 bytes starting at 0x7fffd7d545d4..
+GPGPU-Sim PTX: Setting up arguments for 8 bytes starting at 0x7ffd1b3438e8..
+GPGPU-Sim PTX: Setting up arguments for 8 bytes starting at 0x7ffd1b3438e0..
+GPGPU-Sim PTX: Setting up arguments for 8 bytes starting at 0x7ffd1b3438d8..
+GPGPU-Sim PTX: Setting up arguments for 4 bytes starting at 0x7ffd1b3438d4..
 
-GPGPU-Sim PTX: cudaLaunch for 0x0x561b85708b50 (mode=performance simulation) on stream 0
+GPGPU-Sim PTX: cudaLaunch for 0x0x55fdc767cb50 (mode=performance simulation) on stream 0
 GPGPU-Sim PTX: finding reconvergence points for '_Z9matrixMulPKiS0_Pii'...
 GPGPU-Sim PTX: Finding dominators for '_Z9matrixMulPKiS0_Pii'...
 GPGPU-Sim PTX: Finding immediate dominators for '_Z9matrixMulPKiS0_Pii'...

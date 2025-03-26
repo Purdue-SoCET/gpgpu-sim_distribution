@@ -2105,6 +2105,10 @@ unsigned ptx_sim_init_thread(kernel_info_t &kernel,
     return 0;  // finished!
   }
 
+  if (kernel.get_core_type() == SCALAR_CORE && kernel.threads_per_cta() > 1 ) {
+    return 1; // Scalar core, just init one thread?
+  }
+
   if (threads_left < kernel.threads_per_cta()) {
     return 0;
   }

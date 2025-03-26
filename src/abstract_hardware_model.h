@@ -64,6 +64,8 @@ enum _memory_space_t {
   instruction_space
 };
 
+enum CoreType { SIMT_CORE, SCALAR_CORE };
+
 #ifndef COEFF_STRUCT
 #define COEFF_STRUCT
 
@@ -331,6 +333,7 @@ class kernel_info_t {
 
   unsigned m_uid;  // Kernel ID
   unsigned long long m_streamID;
+  CoreType m_core_type;
 
   // These maps contain the snapshot of the texture mappings at kernel launch
   std::map<std::string, const struct cudaArray *> m_NameToCudaArray;
@@ -360,6 +363,8 @@ class kernel_info_t {
   void destroy_cta_streams();
   void print_parent_info();
   kernel_info_t *get_parent() { return m_parent_kernel; }
+  void set_core_type(CoreType core_type) { m_core_type = core_type; }
+  CoreType get_core_type() { return m_core_type; }
 
  private:
   kernel_info_t *m_parent_kernel;
