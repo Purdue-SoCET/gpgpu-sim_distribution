@@ -1037,10 +1037,6 @@ void shader_core_ctx::fetch() {
             !m_warp[warp_id]->done_exit())) {
           printf("Core %u reclaiming warp %u\n", get_core_type(), warp_id); 
 
-          if (m_config->is_scalar_core_enabled && m_core_type == SCALAR_CORE) {
-            div_tid_table->reset_entry(warp_id); 
-          }
-
           bool did_exit = false;
           for (unsigned t = 0; t < m_config->warp_size; t++) {
             unsigned tid = warp_id * m_config->warp_size + t;
@@ -1054,6 +1050,7 @@ void shader_core_ctx::fetch() {
                 register_cta_thread_exit(cta_id,
                                          &(m_thread[tid]->get_kernel()));
               }
+
               m_not_completed -= 1;
               m_active_threads.reset(tid);
               did_exit = true;
@@ -1062,6 +1059,10 @@ void shader_core_ctx::fetch() {
           if (did_exit) m_warp[warp_id]->set_done_exit();
           --m_active_warps;
           assert(m_active_warps >= 0);
+
+          if (m_config->is_scalar_core_enabled && m_core_type == SCALAR_CORE) {
+            div_tid_table->reset_entry(warp_id); //thread still running when trying to reallocate?  
+          }
         }
 
         // this code fetches instructions from the i-cache or generates memory
@@ -1256,11 +1257,12 @@ void shader_core_ctx::issue() {
     // v3 addition
     if (m_config->is_scalar_core_enabled && get_core_type() == SCALAR_CORE) {
       for (int warp_id = 0; warp_id < m_config->max_warps_per_shader; warp_id++) {
-        if (m_warp[warp_id]->get_pc() == (address_type) 0x68 && !m_warp[warp_id]->functional_done()) {
+        // if (m_warp[warp_id]->get_pc() == (address_type) 0x68 && !m_warp[warp_id]->functional_done()) {
+        if (m_warp[warp_id]->get_pc() == div_tid_table->get_entry(warp_id).simt_rpc && !m_warp[warp_id]->functional_done()) {
           printf("Try to stop warp %u since it is at pc=0x%x\n",warp_id, m_warp[warp_id]->get_pc()); 
-          m_warp[warp_id]->set_completed(warp_id); // Warp is functionally finished
+          m_warp[warp_id]->set_completed(0); // Warp is functionally finished
           m_thread[warp_id]->set_done(); // Thread is finished
-          // m_warp[warp_id]->dec_inst_in_pipeline(); // Doesn't count as in pipeline bc not executed
+          m_thread[warp_id]->m_cta_info->register_thread_exit(m_thread[warp_id]); // Make the thread exit
           m_warp[warp_id]->ibuffer_flush(); 
           warp_exit(warp_id); 
           // return; // don't try to execute the instruction on the RPC
@@ -3173,11 +3175,11 @@ void shader_core_ctx::register_cta_thread_exit(unsigned cta_num,
       m_kernel = NULL;
     }
 
-    // Jin: for concurrent kernels on sm
     if (m_config->is_scalar_core_enabled && get_core_type() == SCALAR_CORE) {
       return; // Doesn't count as kernel running on GPU so don't do gpu kernel management stuff
     }
 
+    // Jin: for concurrent kernels on sm
     release_shader_resource_1block(cta_num, *kernel);
     kernel->dec_running();
     if (!m_gpu->kernel_more_cta_left(kernel)) {
@@ -3850,12 +3852,12 @@ void shader_core_ctx::cycle() {
   // Scalar coure will start up warps if entries are on scalar_que (1 per cycle) 
   if (m_config->is_scalar_core_enabled && get_core_type() == SCALAR_CORE) {
   m_warp[0]->print(stdout); 
-    if (scalar_que->front().m_tid == 4) { // For now only pop 1 entry
-    // if (!scalar_que->empty()) {
+    // if (scalar_que->front().m_tid == 4) { // For now only pop 1 entry
+    if (!scalar_que->empty()) {
       int free_entry_id = div_tid_table->find_free_entry(); // Make sure scalar core has space to assign first
       if (free_entry_id != -1) {
         scalar_que_entry entry = pop_scalar_que(); 
-        div_tid_table->set_entry(free_entry_id, entry.m_tid, entry.m_warp_id); 
+        div_tid_table->set_entry(free_entry_id, entry.m_tid, entry.m_warp_id, entry.reconv_pc); 
 
         kernel_info_t *simt_kernel = m_cluster->get_core()[get_sid() - m_config->n_simt_clusters]->get_kernel(); // Use the same kernel simt core
 

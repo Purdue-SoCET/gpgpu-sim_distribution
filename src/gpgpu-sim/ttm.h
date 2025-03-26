@@ -16,7 +16,7 @@
 
 //#include "../cuda-sim/ptx.tab.h"
 
-// #include "../abstract_hardware_model.h"
+#include "../abstract_hardware_model.h"
 // #include "shader.h"
 // #include "delayqueue.h"
 // #include "dram.h"
@@ -34,6 +34,7 @@ typedef struct div_tid_table_entry {
     unsigned scalar_tid; 
     unsigned simt_tid;
     unsigned simt_wid; 
+    address_type simt_rpc; 
 } div_tid_table_entry;
 
 enum return_fsm_states {
@@ -71,11 +72,11 @@ class divergent_tid_table {
             divergent_tid_table_arr[i].scalar_tid = -1; 
             divergent_tid_table_arr[i].simt_tid = -1; 
             divergent_tid_table_arr[i].simt_wid = -1; 
-
+            divergent_tid_table_arr[i].simt_rpc = -1; 
         }
     } 
     void reset_entry(unsigned warp_id);
-    void set_entry(unsigned scalar_tid, unsigned simt_tid, unsigned simt_wid); 
+    void set_entry(unsigned scalar_tid, unsigned simt_tid, unsigned simt_wid, address_type simt_rpc); 
     div_tid_table_entry get_entry(unsigned scalar_tid);
     int find_free_entry(); 
 };

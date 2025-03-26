@@ -20,6 +20,7 @@
 #include "visualizer.h"
 #include <queue>
 #include <vector>
+#include "../abstract_hardware_model.h"
 
 
 #define MAX(a, b) (((a) > (b)) ? (a) : (b))
@@ -30,13 +31,15 @@ void divergent_tid_table::reset_entry(unsigned warp_id) {
     divergent_tid_table_arr[warp_id].scalar_tid = -1; 
     divergent_tid_table_arr[warp_id].simt_tid = -1; 
     divergent_tid_table_arr[warp_id].simt_wid = -1; 
+    divergent_tid_table_arr[warp_id].simt_rpc = -1; 
 }
 
-void divergent_tid_table::set_entry(unsigned scalar_tid, unsigned simt_tid, unsigned simt_wid) {
+void divergent_tid_table::set_entry(unsigned scalar_tid, unsigned simt_tid, unsigned simt_wid, address_type simt_rpc) {
     divergent_tid_table_arr[scalar_tid].valid = true; 
     divergent_tid_table_arr[scalar_tid].scalar_tid = scalar_tid; 
     divergent_tid_table_arr[scalar_tid].simt_tid = simt_tid; 
     divergent_tid_table_arr[scalar_tid].simt_wid = simt_wid;  
+    divergent_tid_table_arr[scalar_tid].simt_rpc = simt_rpc; 
 }
 
 div_tid_table_entry divergent_tid_table::get_entry(unsigned scalar_tid) {
