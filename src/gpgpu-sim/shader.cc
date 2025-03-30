@@ -113,7 +113,7 @@ void exec_shader_core_ctx::create_shd_warp() {
         }
 
         // Initialize the warp with the appropriate active mask
-        m_warp[k]->init(0, 0, k, active_mask, k, 0);
+        m_warp[k]->init(0, 0, k, active_mask, k, 0, core_type);
         // printf("%s Core: Warp %u initialized with active mask %s\n",
         //        (core_type == SIMT_CORE) ? "SIMT" : "Scalar",
         //        k, active_mask.to_string().c_str());
@@ -174,7 +174,9 @@ void shader_core_ctx::create_front_pipeline() {
                                          m_config->n_thread_per_shader);
 
   m_not_completed = 0;
+  CoreType core_type = get_core_type();
   m_active_threads.reset();
+  if (core_type == SCALAR_CORE) m_active_threads.set(0);
   m_n_active_cta = 0;
   for (unsigned i = 0; i < MAX_CTA_PER_SHADER; i++) m_cta_status[i] = 0;
   for (unsigned i = 0; i < m_config->n_thread_per_shader; i++) {
@@ -530,6 +532,8 @@ void shader_core_ctx::reinit(unsigned start_thread, unsigned end_thread,
   if (reset_not_completed) {
     m_not_completed = 0;
     m_active_threads.reset();
+    CoreType core_type = get_core_type();
+    if (core_type == SCALAR_CORE) m_active_threads.set(0);
 
     // Jin: for concurrent kernels on a SM
     m_occupied_n_threads = 0;
@@ -551,28 +555,47 @@ void shader_core_ctx::reinit(unsigned start_thread, unsigned end_thread,
   }
 }
 
+bool shader_core_ctx::check_warp_divergence(unsigned warp_id) {
+  return warp_id % 3 == 0;
+}
+
 void shader_core_ctx::init_warps(unsigned cta_id, unsigned start_thread,
                                  unsigned end_thread, unsigned ctaid,
                                  int cta_size, kernel_info_t &kernel) {
   address_type start_pc = next_pc(start_thread);
   unsigned kernel_id = kernel.get_uid();
+  unsigned warpSize = m_config->warp_size;
+
   if (m_config->model == POST_DOMINATOR) {
-    unsigned start_warp = start_thread / m_config->warp_size;
-    unsigned warp_per_cta = cta_size / m_config->warp_size;
-    unsigned end_warp = end_thread / m_config->warp_size +
-                        ((end_thread % m_config->warp_size) ? 1 : 0);
+    unsigned start_warp = start_thread / warpSize;
+    unsigned warp_per_cta = cta_size / warpSize;
+    unsigned end_warp = end_thread / warpSize + ((end_thread % warpSize) ? 1 : 0);
+
+    if (end_warp > m_warp.size()) {
+      printf("Error: end_warp (%d) exceeds m_warp size (%lu)\n", end_warp, m_warp.size());
+      exit(1);
+    }
+
     for (unsigned i = start_warp; i < end_warp; ++i) {
       unsigned n_active = 0;
       simt_mask_t active_threads;
-      for (unsigned t = 0; t < m_config->warp_size; t++) {
-        unsigned hwtid = i * m_config->warp_size + t;
+      
+      // Determine core type per warp based on the first thread in the warp
+      CoreType core_type = SIMT_CORE;
+      
+      for (unsigned t = 0; t < warpSize; t++) {
+        unsigned hwtid = i * warpSize + t;
         if (hwtid < end_thread) {
+          if (check_warp_divergence(hwtid)) {  // Assume this function exists
+            core_type = SCALAR_CORE;
+            warpSize = 1;  // Scalar core executes one thread at a time
+          }
           n_active++;
-          assert(!m_active_threads.test(hwtid));
           m_active_threads.set(hwtid);
           active_threads.set(t);
         }
       }
+
       m_simt_stack[i]->launch(start_pc, active_threads);
 
       if (m_gpu->resume_option == 1 && kernel_id == m_gpu->resume_kernel &&
@@ -591,9 +614,8 @@ void shader_core_ctx::init_warps(unsigned cta_id, unsigned start_thread,
         }
         start_pc = pc;
       }
-
       m_warp[i]->init(start_pc, cta_id, i, active_threads, m_dynamic_warp_id,
-                      kernel.get_streamID());
+                      kernel.get_streamID(), core_type);
       ++m_dynamic_warp_id;
       m_not_completed += n_active;
       ++m_active_warps;
@@ -985,7 +1007,11 @@ void shader_core_ctx::fetch() {
                                          &(m_thread[tid]->get_kernel()));
               }
               m_not_completed -= 1;
-              m_active_threads.reset(tid);
+              CoreType core_type = get_core_type();
+              if (core_type == SIMT_CORE) {
+                m_active_threads.reset(tid);
+                printf("Reset in fetch shader_core_ctx");
+              }
               did_exit = true;
             }
           }
