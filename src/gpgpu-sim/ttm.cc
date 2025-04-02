@@ -28,14 +28,28 @@
     
 void divergent_tid_table::reset_entry(unsigned warp_id) {
     divergent_tid_table_arr[warp_id].valid = false; 
+    divergent_tid_table_arr[warp_id].reconverge = false; 
+    divergent_tid_table_arr[warp_id].reconverge_done = false; 
     divergent_tid_table_arr[warp_id].scalar_tid = -1; 
     divergent_tid_table_arr[warp_id].simt_tid = -1; 
     divergent_tid_table_arr[warp_id].simt_wid = -1; 
     divergent_tid_table_arr[warp_id].simt_rpc = -1; 
 }
 
+void divergent_tid_table::print() {
+    for (int warp_id = 0; warp_id < SCALAR_BANDWIDTH; warp_id++) {
+        printf("valid=%d, reconverge=%d, reconverge_done=%d, scalar_tid=%d, simt_tid=%d, simt_wid=%d, simt_rpc=%x\n", 
+        divergent_tid_table_arr[warp_id].valid, divergent_tid_table_arr[warp_id].reconverge, divergent_tid_table_arr[warp_id].reconverge_done,
+        divergent_tid_table_arr[warp_id].scalar_tid, divergent_tid_table_arr[warp_id].simt_tid, divergent_tid_table_arr[warp_id].simt_wid,
+        divergent_tid_table_arr[warp_id].simt_rpc); 
+    }
+    printf("\n"); 
+}
+
 void divergent_tid_table::set_entry(unsigned scalar_tid, unsigned simt_tid, unsigned simt_wid, address_type simt_rpc) {
     divergent_tid_table_arr[scalar_tid].valid = true; 
+    divergent_tid_table_arr[scalar_tid].reconverge = false; 
+    divergent_tid_table_arr[scalar_tid].reconverge_done = false; 
     divergent_tid_table_arr[scalar_tid].scalar_tid = scalar_tid; 
     divergent_tid_table_arr[scalar_tid].simt_tid = simt_tid; 
     divergent_tid_table_arr[scalar_tid].simt_wid = simt_wid;  
@@ -44,6 +58,14 @@ void divergent_tid_table::set_entry(unsigned scalar_tid, unsigned simt_tid, unsi
 
 div_tid_table_entry divergent_tid_table::get_entry(unsigned scalar_tid) {
     return divergent_tid_table_arr[scalar_tid]; 
+}
+
+void divergent_tid_table::set_reconverge(unsigned scalar_tid, bool reconverge) {
+    divergent_tid_table_arr[scalar_tid].reconverge = reconverge;   
+}
+
+void divergent_tid_table::set_reconverge_done(unsigned scalar_tid, bool reconverge_done) {
+    divergent_tid_table_arr[scalar_tid].reconverge_done = reconverge_done;   
 }
 
 int divergent_tid_table::find_free_entry() {

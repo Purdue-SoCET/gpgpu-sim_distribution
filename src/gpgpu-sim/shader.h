@@ -77,7 +77,7 @@
 #define WRITE_MASK_SIZE 8
 
 // V3 Definitions
-#define SAT_LIMIT 10
+#define SAT_LIMIT 50
 #define SCALAR_BANDWIDTH 8
 #define SCALAR_CORE_CAPACITY 16
 #define RECONVERGE_RETURN_PC ((address_type)-2)
@@ -2247,6 +2247,8 @@ class shader_core_ctx : public core_t {
     div_tid_table = tb; 
   }
 
+  void squash_fetch(unsigned warp_id); 
+
   // accessors
   std::list<unsigned> get_regs_written(const inst_t &fvt) const;
   const shader_core_config *get_config() const { return m_config; }
@@ -2560,7 +2562,7 @@ class shader_core_ctx : public core_t {
 
   int test_res_bus(int latency);
   address_type next_pc(int tid) const;
-  virtual void fetch();
+  virtual void fetch(int i);
   void register_cta_thread_exit(unsigned cta_num, kernel_info_t *kernel);
 
   void decode();
@@ -2712,16 +2714,21 @@ class shader_core_ctx : public core_t {
   // v3 addition
   public:
     bool steal;
-    bool reconverge;
-    // return_fsm_states curr_state;
-    // return_fsm_states next_state;
+    std::array<bool, SCALAR_BANDWIDTH> reconverge = {};
+    return_fsm_states curr_state[SCALAR_BANDWIDTH];
+    return_fsm_states next_state[SCALAR_BANDWIDTH];
+    // warp_inst_t wrb_entries[SCALAR_BANDWIDTH]; 
     
   protected:
     Scoreboard *m_fetched_register_board;
-    std::queue<warp_inst_t> m_written_register_board; 
+    Scoreboard *m_written_register_board; 
+    // std::array<std::queue<warp_inst_t>, SCALAR_BANDWIDTH> m_written_register_boards; 
 
     void return_fsm_cycle();
-    void update_return_fsm(); 
+    void return_fsm_update(int warp_id); 
+    void reset_transfer_structures(); 
+
+    std::array<typename std::set<unsigned>::const_iterator, SCALAR_BANDWIDTH> wrb_its; 
   // end of v3 addition
 
 };
@@ -2740,11 +2747,6 @@ class exec_shader_core_ctx : public shader_core_ctx {
         set_core_type(SIMT_CORE);
     } else {
         printf("SCALAR_CORE with shader_id=%d\n", shader_id);
-        set_core_type(SCALAR_CORE);
-    }
-    if (shader_id < n_simt_cores) {
-        set_core_type(SIMT_CORE);
-    } else {
         set_core_type(SCALAR_CORE);
     }
 

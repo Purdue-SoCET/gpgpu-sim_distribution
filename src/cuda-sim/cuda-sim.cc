@@ -1031,7 +1031,7 @@ void ptx_instruction::set_opcode_and_latency() {
 
 void ptx_thread_info::ptx_fetch_inst(inst_t &inst) const {
   addr_t pc = get_pc();
-  const ptx_instruction *pI = m_func_info->get_instruction(pc, get_core()->get_core_type() == SCALAR_CORE);
+  const ptx_instruction *pI = m_func_info->get_instruction(pc, get_core()->get_warp_size());
   inst = (const inst_t &)*pI;
   assert(inst.valid());
 }
@@ -1796,7 +1796,7 @@ void ptx_thread_info::ptx_exec_inst(warp_inst_t &inst, unsigned lane_id) {
   addr_t pc = next_instr();
   assert(pc ==
          inst.pc);  // make sure timing model and functional model are in sync
-  const ptx_instruction *pI = m_func_info->get_instruction(pc, get_core()->get_core_type() == SCALAR_CORE);
+  const ptx_instruction *pI = m_func_info->get_instruction(pc, get_core()->get_warp_size());
 
   set_npc(pc + pI->inst_size());
 
@@ -1918,6 +1918,7 @@ void ptx_thread_info::ptx_exec_inst(warp_inst_t &inst, unsigned lane_id) {
     memory_space_t insn_space = undefined_space;
     _memory_op_t insn_memory_op = no_memory_op;
     unsigned insn_data_size = 0;
+
     if ((pI->has_memory_read() || pI->has_memory_write())) {
       if (!((inst_opcode == MMA_LD_OP || inst_opcode == MMA_ST_OP))) {
         insn_memaddr = last_eaddr();

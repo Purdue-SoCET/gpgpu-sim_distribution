@@ -32,7 +32,7 @@
 #include "shader_trace.h"
 
 // Constructor
-Scoreboard::Scoreboard(unsigned sid, unsigned n_warps, class gpgpu_t* gpu)
+Scoreboard::Scoreboard(unsigned sid, unsigned n_warps, class gpgpu_t* gpu, int type)
     : longopregs() {
   m_sid = sid;
   // Initialize size of table
@@ -40,11 +40,13 @@ Scoreboard::Scoreboard(unsigned sid, unsigned n_warps, class gpgpu_t* gpu)
   longopregs.resize(n_warps);
 
   m_gpu = gpu;
+  // 0 for normal, 1 for FRB, 2 for WRB
+  m_type = type; 
 }
 
 // Print scoreboard contents
 void Scoreboard::printContents() const {
-  printf("scoreboard contents (sid=%d): \n", m_sid);
+  printf("%d scoreboard contents (sid=%d): \n", m_type, m_sid);
   for (unsigned i = 0; i < reg_table.size(); i++) {
     if (reg_table[i].size() == 0) continue;
     printf("  wid = %2d: ", i);
@@ -55,8 +57,10 @@ void Scoreboard::printContents() const {
   }
 }
 
+
+
 void Scoreboard::reserveRegister(unsigned wid, unsigned regnum) {
-  if (!(reg_table[wid].find(regnum) == reg_table[wid].end())) {
+  if (!(reg_table[wid].find(regnum) == reg_table[wid].end()) && m_type == DEFAULT) {
     printf(
         "Error: trying to reserve an already reserved register (sid=%d, "
         "wid=%d, regnum=%d).",
@@ -65,7 +69,7 @@ void Scoreboard::reserveRegister(unsigned wid, unsigned regnum) {
   }
   SHADER_DPRINTF(SCOREBOARD, "Reserved Register - warp:%d, reg: %d\n", wid,
                  regnum);
-  reg_table[wid].insert(regnum);
+  reg_table[wid].insert(regnum); // Adding a duplicate if okay in case of WRB 
 }
 
 // Unmark register as write-pending
@@ -152,4 +156,9 @@ bool Scoreboard::checkCollision(unsigned wid, const class inst_t* inst) const {
 
 bool Scoreboard::pendingWrites(unsigned wid) const {
   return !reg_table[wid].empty();
+}
+
+void Scoreboard::reset() {
+  reg_table.clear();
+  longopregs.clear(); 
 }

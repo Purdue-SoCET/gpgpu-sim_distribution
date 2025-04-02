@@ -535,18 +535,18 @@ void ptx_thread_info::dump_callstack() const {
 }
 
 std::string ptx_thread_info::get_location() const {
-  const ptx_instruction *pI = m_func_info->get_instruction(m_PC, get_core()->get_core_type() == SCALAR_CORE);
+  const ptx_instruction *pI = m_func_info->get_instruction(m_PC, get_core()->get_warp_size());
   char buf[1024];
   snprintf(buf, 1024, "%s:%u", pI->source_file(), pI->source_line());
   return std::string(buf);
 }
 
 const ptx_instruction *ptx_thread_info::get_inst() const {
-  return m_func_info->get_instruction(m_PC, get_core()->get_core_type() == SCALAR_CORE);
+  return m_func_info->get_instruction(m_PC, get_core()->get_warp_size());
 }
 
 const ptx_instruction *ptx_thread_info::get_inst(addr_t pc) const {
-  return m_func_info->get_instruction(pc, get_core()->get_core_type() == SCALAR_CORE);
+  return m_func_info->get_instruction(pc, get_core()->get_warp_size());
 }
 
 void ptx_thread_info::dump_regs(FILE *fp) {

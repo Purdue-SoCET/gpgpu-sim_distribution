@@ -64,8 +64,6 @@ enum _memory_space_t {
   instruction_space
 };
 
-enum CoreType { SIMT_CORE, SCALAR_CORE };
-
 #ifndef COEFF_STRUCT
 #define COEFF_STRUCT
 

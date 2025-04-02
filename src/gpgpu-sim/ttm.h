@@ -22,7 +22,7 @@
 // #include "dram.h"
 // #include "gpu-cache.h"
 // #include "mem_fetch.h"
-// #include "scoreboard.h"
+#include "scoreboard.h"
 // #include "stack.h"
 // #include "stats.h"
 // #include "traffic_breakdown.h"
@@ -31,10 +31,12 @@
 
 typedef struct div_tid_table_entry {
     bool valid; 
+    bool reconverge;
+    bool reconverge_done;  
     unsigned scalar_tid; 
     unsigned simt_tid;
     unsigned simt_wid; 
-    address_type simt_rpc; 
+    address_type simt_rpc;
 } div_tid_table_entry;
 
 enum return_fsm_states {
@@ -69,6 +71,8 @@ class divergent_tid_table {
         divergent_tid_table_arr.resize(n); 
         for (int i = 0; i < n; i++) {
             divergent_tid_table_arr[i].valid = false; 
+            divergent_tid_table_arr[i].reconverge = false; 
+            divergent_tid_table_arr[i].reconverge_done = false; 
             divergent_tid_table_arr[i].scalar_tid = -1; 
             divergent_tid_table_arr[i].simt_tid = -1; 
             divergent_tid_table_arr[i].simt_wid = -1; 
@@ -79,6 +83,10 @@ class divergent_tid_table {
     void set_entry(unsigned scalar_tid, unsigned simt_tid, unsigned simt_wid, address_type simt_rpc); 
     div_tid_table_entry get_entry(unsigned scalar_tid);
     int find_free_entry(); 
+    void set_reconverge(unsigned scalar_tid, bool reconverge); 
+    void set_reconverge_done(unsigned scalar_tid, bool reconverge_done); 
+    void print(); 
+
 };
 
 
