@@ -1068,7 +1068,7 @@ void simt_stack::update(simt_mask_t &thread_done, addr_vector_t &next_pc,
     // extract a group of threads with the same next PC among the active threads
     // in the warp
     address_type tmp_next_pc = null_pc;
-    simt_mask_t tmp_active_mask;
+    simt_mask_t tmp_active_mask; // Copy all threads with same next pc to tmp_active_mask
     for (int i = m_warp_size - 1; i >= 0; i--) {
       if (top_active_mask.test(i)) {  // is this thread active?
         if (thread_done.test(i)) {

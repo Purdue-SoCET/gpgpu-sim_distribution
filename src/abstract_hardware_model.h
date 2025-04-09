@@ -458,6 +458,19 @@ class simt_stack {
   void resume(char *fname);
   void print_checkpoint(FILE *fout) const;
 
+  void set_active_mask(simt_mask_t new_mask) {
+     m_stack.back().m_active_mask = new_mask; 
+  } 
+
+  bool clear_empty() {
+    if (m_stack.back().m_active_mask.none()) {
+      assert(m_stack.size() > 0); 
+      m_stack.pop_back(); 
+      return true;
+    }
+    return false; 
+  }
+
  protected:
   unsigned m_warp_id;
   unsigned m_warp_size;

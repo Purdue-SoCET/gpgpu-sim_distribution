@@ -1149,7 +1149,7 @@ void shader_core_ctx::issue_warp(register_set &pipe_reg_set,
                                  unsigned warp_id, unsigned sch_id) {
   // V3 modifications
   if (m_config->is_scalar_core_enabled && get_core_type() == SIMT_CORE) {
-    shd_warp_t * warp = m_warp[warp_id];                    
+    shd_warp_t * warp = m_warp[warp_id];    
     active_mask_t result_mask = warp->get_result_mask(active_mask); // Get thread mask that will run on SIMT core by anding inverse scalar mask and simt stack thread mask
 
     unsigned num_active_threads = warp->count_active_threads(result_mask); // Count number of active threads 
@@ -1161,7 +1161,20 @@ void shader_core_ctx::issue_warp(register_set &pipe_reg_set,
     std::vector<unsigned> scalarized_tids = warp->check_sat_counters(); // Check if any warp has hit the saturation limit
 
     warp->set_scalar_regs(scalarized_tids); // Fill any available registers in one cycle with the info that the scalar core would need
-    warp->cycle_through_scalar_regs(); // Controller cycles through registers every cycle and pushes to scalar que
+    bool pushed = warp->cycle_through_scalar_regs(); // Controller cycles through registers every cycle and pushes to scalar que
+    // if (pushed) {
+    //     fprintf(stdout, "SIMT Stack Before Update:\n"); 
+    //     m_simt_stack[warp_id]->print(stdout);    
+    //     m_simt_stack[warp_id]->set_active_mask(result_mask); 
+    //     m_simt_stack[warp_id]->clear_empty(); // If active mask was set to all 0s, then remove it from SIMT stack
+    // }
+
+    m_simt_stack[warp_id]->print(stdout);    
+
+    // If all the threads in a warp get issued to scalar core, check if the thread is active in the new top of stack
+    // If so, don't issue that warp. Else, can issue the warp.  
+    // To do: Try to debug start PC being off
+
   }
 
   if (m_config->is_scalar_core_enabled && get_core_type() == SCALAR_CORE) {
@@ -5355,7 +5368,8 @@ unsigned shd_warp_t::set_scalar_regs(std::vector<unsigned> scalar_tids){
   return num_scalarized;
 }
 
-void shd_warp_t::cycle_through_scalar_regs(){
+bool shd_warp_t::cycle_through_scalar_regs(){
+  bool ret_val = false; 
   scalar_reg reg = scalar_regs[reg_cntr];
   // fprintf(stdout,"Reg counter value %d\n",reg_cntr);
   // fprintf(stdout,"Scalar Register State for Warp %d\n",m_warp_id);
@@ -5368,7 +5382,7 @@ void shd_warp_t::cycle_through_scalar_regs(){
 
   if(reg.dirty){
     bool pushed = m_shader->push_scalar_que(reg.m_tid,m_warp_id,reg.start_pc,reg.reconv_pc);
-    
+    ret_val = true;
     fprintf(stdout,"Scalarized thread %d in warp %d\n",reg.m_tid,m_warp_id);
     
     if(pushed){
@@ -5385,6 +5399,7 @@ void shd_warp_t::cycle_through_scalar_regs(){
   else{
     reg_cntr++;
   }
+  return ret_val; 
 }
 
 

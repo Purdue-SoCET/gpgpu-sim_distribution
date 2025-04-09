@@ -77,3 +77,13 @@ int divergent_tid_table::find_free_entry() {
     }
     return -1; 
 }
+
+bool divergent_tid_table::is_wid_in_table(unsigned simt_wid) {
+    for (int i = 0; i < num_entries; i++) {
+        if (divergent_tid_table_arr[i].simt_wid == simt_wid && divergent_tid_table_arr[i].valid) { 
+            return true; 
+        }
+
+    }
+    return false; 
+} 

@@ -86,6 +86,7 @@ class divergent_tid_table {
     void set_reconverge(unsigned scalar_tid, bool reconverge); 
     void set_reconverge_done(unsigned scalar_tid, bool reconverge_done); 
     void print(); 
+    bool is_wid_in_table(unsigned simt_wid); 
 
 };
 

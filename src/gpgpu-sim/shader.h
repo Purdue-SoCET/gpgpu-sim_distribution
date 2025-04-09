@@ -324,7 +324,8 @@ class shd_warp_t {
 
   unsigned set_scalar_regs(std::vector<unsigned> scalar_tids); // Sets the threads to be scalarized in the scalar registers if there is space, returns number of registers scalarized
 
-  void cycle_through_scalar_regs(); // Simulates cycle by cycle controller that iterates over scalar registers and pushes to the scalar que
+  bool cycle_through_scalar_regs(); // Simulates cycle by cycle controller that iterates over scalar registers and pushes to the scalar que
+  // Returns whether a push occured or not
 
   bool all_on_scalar(active_mask_t simt_mask){
     return (~scalar_mask & simt_mask).none(); //If simt mask & ~scalar mask is all 0s, that means all threads are on scalar core
