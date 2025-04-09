@@ -86,8 +86,6 @@ enum exec_unit_type_t {
   SPECIALIZED = 7
 };
 
-enum CoreType { SIMT_CORE, SCALAR_CORE };
-
 class thread_ctx_t {
  public:
   unsigned m_cta_id;  // hardware CTA this thread belongs
@@ -144,18 +142,17 @@ class shd_warp_t {
   }
   void init(address_type start_pc, unsigned cta_id, unsigned wid,
             const std::bitset<MAX_WARP_SIZE> &active, unsigned dynamic_warp_id,
-            unsigned long long streamID, CoreType core_type) {
+            unsigned long long streamID) {
     m_streamID = streamID;
     m_cta_id = cta_id;
     m_warp_id = wid;
     m_dynamic_warp_id = dynamic_warp_id;
     m_next_pc = start_pc;
-    //assert(n_completed >= active.count());
+    assert(n_completed >= active.count());
     assert(n_completed <= m_warp_size);
     n_completed -= active.count();  // active threads are not yet completed
     m_active_threads = active;
     m_done_exit = false;
-    m_core_type = core_type; // Store core type
 
     // Jin: cdp support
     m_cdp_latency = 0;
@@ -281,9 +278,6 @@ class shd_warp_t {
   }
 
  private:
-  // for core type
-  CoreType m_core_type;
-
   static const unsigned IBUFFER_SIZE = 2;
   class shader_core_ctx *m_shader;
   unsigned long long m_streamID;
@@ -2076,8 +2070,6 @@ class shader_core_ctx : public core_t {
   }
   // used by simt_core_cluster:
   // modifiers
-  bool check_warp_divergence(unsigned warp_id);  
-
   void cycle();
   void reinit(unsigned start_thread, unsigned end_thread,
               bool reset_not_completed);
@@ -2607,6 +2599,7 @@ class exec_shader_core_ctx : public shader_core_ctx {
     create_front_pipeline();
     create_shd_warp();
     create_schedulers();
+    // fprintf(stdout, "Number of Warps per shader core: %d\n", schedulers[0]->m_supervised_warps.size());
     create_exec_pipeline();
   }
 
