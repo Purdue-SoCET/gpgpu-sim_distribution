@@ -109,6 +109,8 @@ enum exec_unit_type_t {
   SPECIALIZED = 7
 };
 
+enum CoreType { SIMT_CORE, SCALAR_CORE };
+
 class thread_ctx_t {
  public:
   unsigned m_cta_id;  // hardware CTA this thread belongs

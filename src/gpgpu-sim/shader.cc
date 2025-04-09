@@ -114,9 +114,9 @@ void exec_shader_core_ctx::create_shd_warp() {
 
         // Initialize the warp with the appropriate active mask
         m_warp[k]->init(0, 0, k, active_mask, k, 0);
-        printf("%s Core: Warp %u initialized with active mask %s\n",
-               (core_type == SIMT_CORE) ? "SIMT" : "Scalar",
-               k, active_mask.to_string().c_str());
+        // printf("%s Core: Warp %u initialized with active mask %s\n",
+        //        (core_type == SIMT_CORE) ? "SIMT" : "Scalar",
+        //        k, active_mask.to_string().c_str());
     }
 }
 
@@ -4505,8 +4505,8 @@ void opndcoll_rfu_t::collector_unit_t::dispatch() {
 
 void exec_simt_core_cluster::create_shader_core_ctx() {
     unsigned total_cores = m_config->n_simt_cores_per_cluster;
-    unsigned n_scalar_cores = total_cores / 2;  // Half SIMT cores
-    unsigned n_simt_cores= total_cores - n_simt_cores;  // Remaining scalar cores
+    unsigned n_simt_cores = total_cores / 2;  // Half SIMT cores
+    unsigned n_scalar_cores = total_cores - n_simt_cores;  // Remaining scalar cores
 
     // Validate total cores
     if (total_cores % 2 != 0) {
@@ -4517,8 +4517,6 @@ void exec_simt_core_cluster::create_shader_core_ctx() {
     m_core = new shader_core_ctx * [total_cores];
 
     // Create SIMT cores
-    printf("m_config->n_simt_cores_per_cluster=%d\n",m_config->n_simt_cores_per_cluster);
-
     for (unsigned i = 0; i < n_simt_cores; i++) {
         unsigned sid = m_config->cid_to_sid(i, m_cluster_id);
         m_core[i] = new exec_shader_core_ctx(m_gpu, this, sid, m_cluster_id,
