@@ -77,7 +77,7 @@
 #define WRITE_MASK_SIZE 8
 
 // V3 Definitions
-#define SAT_LIMIT 50
+#define SAT_LIMIT 30
 #define SCALAR_BANDWIDTH 8
 #define SCALAR_CORE_CAPACITY 16
 #define RECONVERGE_RETURN_PC ((address_type)-2)
@@ -317,6 +317,8 @@ class shd_warp_t {
   void increment_sat_counters(active_mask_t result_thread_mask);
 
   std::vector<unsigned> check_sat_counters();
+
+  void clear_counters(unsigned tid); 
 
   void get_pcs(unsigned *rpc, unsigned *pc);
 
@@ -2247,6 +2249,7 @@ class shader_core_ctx : public core_t {
   void set_div_tid_table(divergent_tid_table *tb) {
     div_tid_table = tb; 
   }
+
 
   void squash_fetch(unsigned warp_id); 
 

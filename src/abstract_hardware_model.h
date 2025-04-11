@@ -471,6 +471,10 @@ class simt_stack {
     return false; 
   }
 
+  int get_size() {
+    return m_stack.size(); 
+  }
+
  protected:
   unsigned m_warp_id;
   unsigned m_warp_size;

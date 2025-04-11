@@ -1061,7 +1061,7 @@ void shader_core_ctx::fetch(int iter) {
             assert(m_active_warps >= 0);
 
             if (m_config->is_scalar_core_enabled && m_core_type == SCALAR_CORE) {
-              div_tid_table->reset_entry(warp_id); 
+              div_tid_table->invalidate_entry(warp_id); 
               curr_state[warp_id] = IDLE; 
               next_state[warp_id] = IDLE; 
               printf("Core %u reclaimied warp %u\n", get_core_type(), warp_id); 
@@ -1148,6 +1148,10 @@ void shader_core_ctx::issue_warp(register_set &pipe_reg_set,
                                  const active_mask_t &active_mask,
                                  unsigned warp_id, unsigned sch_id) {
   // V3 modifications
+  bool skip = false; 
+  unsigned pc, rpc;
+  address_type next_pc = next_inst->pc; 
+
   if (m_config->is_scalar_core_enabled && get_core_type() == SIMT_CORE) {
     shd_warp_t * warp = m_warp[warp_id];    
     active_mask_t result_mask = warp->get_result_mask(active_mask); // Get thread mask that will run on SIMT core by anding inverse scalar mask and simt stack thread mask
@@ -1162,12 +1166,23 @@ void shader_core_ctx::issue_warp(register_set &pipe_reg_set,
 
     warp->set_scalar_regs(scalarized_tids); // Fill any available registers in one cycle with the info that the scalar core would need
     bool pushed = warp->cycle_through_scalar_regs(); // Controller cycles through registers every cycle and pushes to scalar que
-    // if (pushed) {
-    //     fprintf(stdout, "SIMT Stack Before Update:\n"); 
-    //     m_simt_stack[warp_id]->print(stdout);    
-    //     m_simt_stack[warp_id]->set_active_mask(result_mask); 
-    //     m_simt_stack[warp_id]->clear_empty(); // If active mask was set to all 0s, then remove it from SIMT stack
-    // }
+    if (pushed) {
+        fprintf(stdout, "SIMT Stack Before Update:\n"); 
+        m_simt_stack[warp_id]->print(stdout);  
+        fprintf(stdout, "\n"); 
+        m_simt_stack[warp_id]->set_active_mask(result_mask); 
+        m_simt_stack[warp_id]->clear_empty(); // If active mask was set to all 0s, then remove it from SIMT stack
+        m_simt_stack[warp_id]->get_pdom_stack_top_info(&pc, &rpc); 
+        m_thread[warp_id * m_config->warp_size + scalar_que->back().m_tid]->set_npc(pc); // updateStack looks at PC of threads to determine divergence. So update it so SIMT stack doesn't split. 
+        m_thread[warp_id * m_config->warp_size + scalar_que->back().m_tid]->update_pc(); 
+        // fprintf(stdout, "Set warp %u, thread %u's PC to 0x%x\n", warp_id, scalar_que->back().m_tid, pc); 
+
+        m_warp[warp_id]->dec_inst_in_pipeline(); // Since inst won't make it to WB, say it isn't in pipeline anymore
+        skip = true; 
+        // fprintf(stdout, "\n"); 
+
+
+    }
 
     m_simt_stack[warp_id]->print(stdout);    
 
@@ -1204,13 +1219,18 @@ void shader_core_ctx::issue_warp(register_set &pipe_reg_set,
 
   m_warp[warp_id]->ibuffer_free();
   assert(next_inst->valid());
-  **pipe_reg = *next_inst;  // static instruction information
-  (*pipe_reg)->issue(
-      active_mask, warp_id, m_gpu->gpu_tot_sim_cycle + m_gpu->gpu_sim_cycle,
-      m_warp[warp_id]->get_dynamic_warp_id(), sch_id,
-      m_warp[warp_id]->get_streamID());  // dynamic instruction information
-  m_stats->shader_cycle_distro[2 + (*pipe_reg)->active_count()]++;
-  func_exec_inst(**pipe_reg);
+  if (!skip) {
+    **pipe_reg = *next_inst;  // static instruction information
+    (*pipe_reg)->issue(
+        active_mask, warp_id, m_gpu->gpu_tot_sim_cycle + m_gpu->gpu_sim_cycle,
+        m_warp[warp_id]->get_dynamic_warp_id(), sch_id,
+        m_warp[warp_id]->get_streamID());  // dynamic instruction information
+    m_stats->shader_cycle_distro[2 + (*pipe_reg)->active_count()]++;
+    func_exec_inst(**pipe_reg);
+  } else {
+    (*pipe_reg)->pc = pc; 
+    next_pc = pc; 
+  }
 
   // Add LDGSTS instructions into a buffer
   unsigned int ldgdepbar_id = m_warp[warp_id]->m_ldgdepbar_id;
@@ -1280,10 +1300,12 @@ void shader_core_ctx::issue_warp(register_set &pipe_reg_set,
     }
   }
 
-  updateSIMTStack(warp_id, *pipe_reg);
+  if (!skip) {
+    m_scoreboard->reserveRegisters(*pipe_reg);
+  }
 
-  m_scoreboard->reserveRegisters(*pipe_reg);
-  m_warp[warp_id]->set_next_pc(next_inst->pc + next_inst->isize);
+  updateSIMTStack(warp_id, *pipe_reg);
+  m_warp[warp_id]->set_next_pc(next_pc + next_inst->isize); // Assuming isize doesn't really change
 }
 
 void shader_core_ctx::issue() {
@@ -1307,6 +1329,7 @@ void shader_core_ctx::issue() {
       }
     }
   }
+
   // end of v3 addition
 
   // Ensure fair round robin issue between schedulers
@@ -1471,6 +1494,40 @@ void scheduler_unit::cycle() {
                                                  // units (as in Maxwell and
                                                  // Pascal)
     
+    if (this->m_shader->get_config()->is_scalar_core_enabled && this->m_shader->get_core_type() == SIMT_CORE) {
+      // Code to reassert thread after finished running on scalar core
+      unsigned reconv_tid = this->m_shader->div_tid_table->is_wid_ready_to_reconv(warp_id);
+      if (reconv_tid != -1) {
+        simt_mask_t new_active_mask = this->m_shader->m_simt_stack[warp_id]->get_active_mask();
+        simt_mask_t scalar_mask;  
+        scalar_mask.set(reconv_tid); 
+        new_active_mask |= scalar_mask; 
+        m_simt_stack[warp_id]->set_active_mask(new_active_mask); 
+        unsigned scalar_wid = this->m_shader->div_tid_table->simt_to_scalar(warp_id, reconv_tid); 
+        this->m_shader->div_tid_table->reset_entry(scalar_wid); 
+        // NOTE: This needs to not happen if entry was popped off SIMT stack
+      }
+
+      // fprintf(stdout, "SIMT Stack:\n"); 
+      // this->m_shader->m_simt_stack[warp_id]->print(stdout); 
+
+      // Code to not issue warp if thread is set in new top of SIMT stack
+      if (this->m_shader->m_simt_stack[warp_id]->get_size() > 0) {
+        simt_mask_t new_active_mask = this->m_shader->m_simt_stack[warp_id]->get_active_mask();
+        simt_mask_t scalar_mask;  
+        unsigned thread = this->m_shader->div_tid_table->is_wid_in_table(warp_id); 
+        if (thread != -1) {
+          scalar_mask.set(thread); 
+          if ((new_active_mask & scalar_mask).test(thread)) { // Thread is still active in thread mask, so don't issue warp
+              SCHED_DPRINTF(
+              "Warp (warp_id %u, dynamic_warp_id %u) not issued bc thread still active in thread mask\n",
+              (*iter)->get_warp_id(), (*iter)->get_dynamic_warp_id());
+              continue; 
+          }
+        }
+      }
+    }
+
     if (warp(warp_id).ibuffer_empty())
       SCHED_DPRINTF(
           "Warp (warp_id %u, dynamic_warp_id %u) fails as ibuffer_empty\n",
@@ -5332,7 +5389,16 @@ std::vector<unsigned> shd_warp_t::check_sat_counters(){
       scalar_tids.push_back(i);
     }
   }
+
   return scalar_tids;
+}
+
+void shd_warp_t::clear_counters(unsigned tid) {
+  // Reset all the counting logic so it's ready to push stuff again
+  for (unsigned i = 0; i < m_warp_size; i++) {
+    sat_counters[i] = 0; 
+  }
+  scalar_mask[tid] = 0;
 }
 
 
@@ -5423,7 +5489,10 @@ void shader_core_ctx::return_fsm_update(int warp_id) {
     case PULL:
       printf("Core %u, warp %u is in PULL state\n", get_core_type(), warp_id); 
       if (!m_written_register_board->pendingWrites(warp_id)) { // If WRB is empty, go back to IDLE
+          printf("Core %u, warp %u has nothing to pull \n", get_core_type(), warp_id, *(wrb_its[warp_id])); 
           next_state[warp_id] = IDLE; 
+          div_tid_table->set_reconverge_done(warp_id, true); 
+          wrb_its[warp_id] = m_written_register_board->get_regtable(warp_id).begin(); 
       } else {
           printf("Core %u, warp %u, reg %u pulled from written register board\n", get_core_type(), warp_id, *(wrb_its[warp_id])); 
           next_state[warp_id] = READING;

@@ -985,7 +985,7 @@ void simt_stack::resume(char *fname) {
 }
 
 const simt_mask_t &simt_stack::get_active_mask() const {
-  assert(m_stack.size() > 0);
+  assert(m_stack.size() > 0); 
   return m_stack.back().m_active_mask;
 }
 
