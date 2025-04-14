@@ -1075,7 +1075,8 @@ void shader_core_ctx::issue_warp(register_set &pipe_reg_set,
 
   warp->set_scalar_regs(scalarized_tids); // Fill any available registers in one cycle with the info that the scalar core would need
   warp->cycle_through_scalar_regs(); // Controller cycles through registers every cycle and pushes to scalar que
-  
+  rr_top_level_scheduler();
+
   // End of V3
 
   warp_inst_t **pipe_reg =
@@ -4991,12 +4992,12 @@ void exec_shader_core_ctx::checkExecutionStatusAndUpdate(warp_inst_t &inst,
 }
 
 // V3 Function Definitions
-bool shader_core_ctx::push_scalar_que(unsigned tid, unsigned warp_id, address_type start_pc, address_type reconv_pc){
-  scalar_que_entry entry;
-  entry.m_tid = tid;
-  entry.m_warp_id = warp_id;
-  entry.start_pc = start_pc;
-  entry.reconv_pc = reconv_pc;
+bool shader_core_ctx::push_scalar_que(scalar_que_entry entry){
+  // scalar_que_entry entry;
+  // entry.m_tid = tid;
+  // entry.m_warp_id = warp_id;
+  // entry.start_pc = start_pc;
+  // entry.reconv_pc = reconv_pc;
 
   if(scalar_que.size() == SCALAR_CORE_CAPACITY){
     return 0; // Failed to push because que is full
@@ -5077,6 +5078,7 @@ unsigned shd_warp_t::set_scalar_regs(std::vector<unsigned> scalar_tids){
         unsigned tid = scalar_tids.back();
         scalar_tids.pop_back();
 
+        sat_counters[tid] = 0; // Rest Saturating Counters
         scalar_mask[tid] = 1; // Set scalar mask bit after the thread context has been registered
         
         reg.m_tid = tid;
@@ -5099,32 +5101,54 @@ unsigned shd_warp_t::set_scalar_regs(std::vector<unsigned> scalar_tids){
 
 void shd_warp_t::cycle_through_scalar_regs(){
   scalar_reg reg = scalar_regs[reg_cntr];
-  // fprintf(stdout,"Reg counter value %d\n",reg_cntr);
-  // fprintf(stdout,"Scalar Register State for Warp %d\n",m_warp_id);
-  // fprintf(stdout,"Thread ID | Start PC | Reconvergence PC | Dirty\n");
 
-  // for(int i=SCALAR_BANDWIDTH-1; i>=0; i--){
-  //   scalar_reg que_entry = scalar_regs[i];
-  //   fprintf(stdout,"%d        | %x       | %x               | %d\n",que_entry.m_tid,que_entry.start_pc,que_entry.reconv_pc,que_entry.dirty);
-  // }
+  if(!get_elected_status()){ // Waits until elected thread is pushed to scalar que
+    if(reg.dirty){
+      
+      scalar_que_entry entry;
+      entry.m_tid = reg.m_tid;
+      entry.m_warp_id = m_warp_id;
+      entry.start_pc = reg.start_pc;
+      entry.reconv_pc = reg.reconv_pc;
 
-  if(reg.dirty){
-    bool pushed = m_shader->push_scalar_que(reg.m_tid,m_warp_id,reg.start_pc,reg.reconv_pc);
-    
-    fprintf(stdout,"Scalarized thread %d in warp %d\n",reg.m_tid,m_warp_id);
-    
-    if(pushed){
+      set_elected_status((bool) 1);
+      set_elected_thread(entry);
+
+      fprintf(stdout,"Elected to scalarize thread %d in warp %d\n",reg.m_tid,m_warp_id);
+
       reg.dirty = 0;
       scalar_regs[reg_cntr] = reg;
-      m_shader->display_scalar_que();
+    }
+
+    if(reg_cntr == SCALAR_BANDWIDTH-1){
+      reg_cntr = 0;
+    }
+
+    else{
+      reg_cntr++;
+    }
+}
+}
+
+
+void shader_core_ctx::rr_top_level_scheduler(){
+  shd_warp_t* warp = m_warp[warp_cntr];
+  // fprintf(stdout,"Top Level scheduler checking Warp %d\n",warp_cntr);
+  if(warp->get_elected_status()){
+    bool pushed = push_scalar_que(warp->get_elected_thread());
+    
+    if(pushed){
+      fprintf(stdout,"Scalarized thread %d in warp %d\n",warp->get_elected_thread().m_tid,warp->get_elected_thread().m_warp_id);
+      warp->set_elected_status((bool) 0);
+      display_scalar_que();
     }
   }
 
-  if(reg_cntr == SCALAR_BANDWIDTH-1){
-    reg_cntr = 0;
+  if(warp_cntr == m_config->max_warps_per_shader-1){
+    warp_cntr = 0;
   }
 
   else{
-    reg_cntr++;
+    warp_cntr++;
   }
 }
