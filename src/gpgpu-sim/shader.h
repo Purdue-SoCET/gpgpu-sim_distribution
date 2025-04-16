@@ -349,6 +349,14 @@ class shd_warp_t {
     return scalar_mask;
   }
 
+  bool get_elected_status(){return elected;}
+
+  void set_elected_status(bool in){elected = in;}
+
+  scalar_que_entry get_elected_thread(){return elected_thread;}
+  
+  void set_elected_thread(scalar_que_entry entry){elected_thread = entry;}
+
 
   class shader_core_ctx *get_shader() {
     return m_shader;
@@ -406,6 +414,9 @@ class shd_warp_t {
   unsigned reg_cntr;
 
   unsigned num_scalarizations;
+
+  bool elected;
+  scalar_que_entry elected_thread;
 
   // Jin: cdp support
  public:
@@ -2230,8 +2241,10 @@ class shader_core_ctx : public core_t {
   // V3 Arch methods 
   void display_scalar_que();
 
-  bool push_scalar_que(unsigned tid, unsigned warp_id, address_type start_pc, address_type reconv_pc);
+  void rr_top_level_scheduler();
 
+  bool push_scalar_que(scalar_que_entry entry);
+  
   unsigned get_scalar_que_ocp(){
     return scalar_que->size();
   }
@@ -2628,6 +2641,7 @@ class shader_core_ctx : public core_t {
   unsigned long long m_last_inst_gpu_tot_sim_cycle;
 
   // V3 arch structure
+  unsigned warp_cntr;
   std::deque<scalar_que_entry> *scalar_que;
   divergent_tid_table *div_tid_table; 
 

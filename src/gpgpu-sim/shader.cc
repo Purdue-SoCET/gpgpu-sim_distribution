@@ -1164,31 +1164,34 @@ void shader_core_ctx::issue_warp(register_set &pipe_reg_set,
 
     std::vector<unsigned> scalarized_tids = warp->check_sat_counters(); // Check if any warp has hit the saturation limit
 
+  warp->set_scalar_regs(scalarized_tids); // Fill any available registers in one cycle with the info that the scalar core would need
+  warp->cycle_through_scalar_regs(); // Controller cycles through registers every cycle and pushes to scalar que
+  rr_top_level_scheduler();
+
+  // End of V3
     warp->set_scalar_regs(scalarized_tids); // Fill any available registers in one cycle with the info that the scalar core would need
     bool pushed = warp->cycle_through_scalar_regs(); // Controller cycles through registers every cycle and pushes to scalar que
-    if (pushed) {
-        fprintf(stdout, "SIMT Stack Before Update:\n"); 
-        m_simt_stack[warp_id]->print(stdout);  
-        fprintf(stdout, "\n"); 
-        m_simt_stack[warp_id]->set_active_mask(result_mask); 
-        m_simt_stack[warp_id]->clear_empty(); // If active mask was set to all 0s, then remove it from SIMT stack
-        m_simt_stack[warp_id]->get_pdom_stack_top_info(&pc, &rpc); 
-        m_thread[warp_id * m_config->warp_size + scalar_que->back().m_tid]->set_npc(pc); // updateStack looks at PC of threads to determine divergence. So update it so SIMT stack doesn't split. 
-        m_thread[warp_id * m_config->warp_size + scalar_que->back().m_tid]->update_pc(); 
+    
+    // Don't need to deassert thread. Check with Khoi before deleting tho. 
+    // if (pushed) {
+        // fprintf(stdout, "SIMT Stack Before Update:\n"); 
+        // m_simt_stack[warp_id]->print(stdout);  
+        // fprintf(stdout, "\n"); 
+        // m_simt_stack[warp_id]->set_active_mask(result_mask); 
+        // m_simt_stack[warp_id]->clear_empty(); // If active mask was set to all 0s, then remove it from SIMT stack
+        // m_simt_stack[warp_id]->get_pdom_stack_top_info(&pc, &rpc); 
+        // m_thread[warp_id * m_config->warp_size + scalar_que->back().m_tid]->set_npc(pc); // updateStack looks at PC of threads to determine divergence. So update it so SIMT stack doesn't split. 
+        // m_thread[warp_id * m_config->warp_size + scalar_que->back().m_tid]->update_pc(); 
         // fprintf(stdout, "Set warp %u, thread %u's PC to 0x%x\n", warp_id, scalar_que->back().m_tid, pc); 
 
-        m_warp[warp_id]->dec_inst_in_pipeline(); // Since inst won't make it to WB, say it isn't in pipeline anymore
-        skip = true; 
+        // m_warp[warp_id]->dec_inst_in_pipeline(); // Since inst won't make it to WB, say it isn't in pipeline anymore
+        // skip = true; 
         // fprintf(stdout, "\n"); 
 
 
-    }
+    // }
 
-    m_simt_stack[warp_id]->print(stdout);    
-
-    // If all the threads in a warp get issued to scalar core, check if the thread is active in the new top of stack
-    // If so, don't issue that warp. Else, can issue the warp.  
-    // To do: Try to debug start PC being off
+    // m_simt_stack[warp_id]->print(stdout);    
 
   }
 
@@ -5316,12 +5319,12 @@ void exec_shader_core_ctx::checkExecutionStatusAndUpdate(warp_inst_t &inst,
 }
 
 // V3 Function Definitions
-bool shader_core_ctx::push_scalar_que(unsigned tid, unsigned warp_id, address_type start_pc, address_type reconv_pc){
-  scalar_que_entry entry;
-  entry.m_tid = tid;
-  entry.m_warp_id = warp_id;
-  entry.start_pc = start_pc;
-  entry.reconv_pc = reconv_pc;
+bool shader_core_ctx::push_scalar_que(scalar_que_entry entry){
+  // scalar_que_entry entry;
+  // entry.m_tid = tid;
+  // entry.m_warp_id = warp_id;
+  // entry.start_pc = start_pc;
+  // entry.reconv_pc = reconv_pc;
 
   if(scalar_que->size() == SCALAR_CORE_CAPACITY){
     return 0; // Failed to push because que is full
@@ -5418,6 +5421,7 @@ unsigned shd_warp_t::set_scalar_regs(std::vector<unsigned> scalar_tids){
         unsigned tid = scalar_tids.back();
         scalar_tids.pop_back();
 
+        sat_counters[tid] = 0; // Rest Saturating Counters
         scalar_mask[tid] = 1; // Set scalar mask bit after the thread context has been registered
         
         reg.m_tid = tid;
@@ -5445,6 +5449,20 @@ bool shd_warp_t::cycle_through_scalar_regs(){
   fprintf(stdout,"Scalar Register State for Warp %d\n",m_warp_id);
   fprintf(stdout,"Thread ID | Start PC | Reconvergence PC | Dirty\n");
 
+  if(!get_elected_status()){ // Waits until elected thread is pushed to scalar que
+    if(reg.dirty){
+      
+      scalar_que_entry entry;
+      entry.m_tid = reg.m_tid;
+      entry.m_warp_id = m_warp_id;
+      entry.start_pc = reg.start_pc;
+      entry.reconv_pc = reg.reconv_pc;
+
+      set_elected_status((bool) 1);
+      set_elected_thread(entry);
+
+      fprintf(stdout,"Elected to scalarize thread %d in warp %d\n",reg.m_tid,m_warp_id);
+
   for(int i=SCALAR_BANDWIDTH-1; i>=0; i--){
     scalar_reg que_entry = scalar_regs[i];
     fprintf(stdout,"%d        | %x       | %x               | %d\n",que_entry.m_tid,que_entry.start_pc,que_entry.reconv_pc,que_entry.dirty);
@@ -5458,25 +5476,18 @@ bool shd_warp_t::cycle_through_scalar_regs(){
     if(pushed){
       reg.dirty = 0;
       scalar_regs[reg_cntr] = reg;
-      m_shader->display_scalar_que();
     }
-  }
 
-  if(reg_cntr == SCALAR_BANDWIDTH-1){
-    reg_cntr = 0;
-  }
+    if(reg_cntr == SCALAR_BANDWIDTH-1){
+      reg_cntr = 0;
+    }
 
-  else{
-    reg_cntr++;
-  }
+    else{
+      reg_cntr++;
+    }
   return ret_val; 
 }
-
-// does this have to cycle one reg per cycle?
-// when does reg and count reset? 
-// edge case if thread passed-> on simt stack, thread ends-> new mask gets a wrong thread set when ends on scalar
-
-
+}
 void shader_core_ctx::return_fsm_cycle() {
   for (int warp_id = 0; warp_id < SCALAR_BANDWIDTH; warp_id++) {
     curr_state[warp_id] = next_state[warp_id]; 
