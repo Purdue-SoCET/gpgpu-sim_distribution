@@ -1019,17 +1019,10 @@ void shader_core_ctx::fetch(int iter) {
           // Once hardware is done and all pending writes are cleared, start reconvergence
           bool skip = false; 
           if (m_config->is_scalar_core_enabled && get_core_type() == SCALAR_CORE) {
-            // div_tid_table->print(); 
             skip = true; 
 
-            // // Warp is ready to start reconverging
-            // if (div_tid_table->get_entry(warp_id).reconverge == true && div_tid_table->get_entry(warp_id).reconverge_done == false && iter == 0) {
-            //   printf("Core %u, warp %u is going to start reconverging\n", get_core_type(), warp_id); 
-            //   reconverge[warp_id] = true; 
-            //   skip = true; // Don't free warp and officially exit until reconvergence is complete
-            // }
             // Warp is done reconverging and can be descheduled
-            if (div_tid_table->get_entry(warp_id).reconverge == true && div_tid_table->get_entry(warp_id).reconverge_done == true) {
+            if (reconverge_start.test(warp_id) && reconverge_done.test(warp_id)) {
               printf("Core %u, warp %u is done reconverging\n", get_core_type(), warp_id); 
               skip = false; 
             }
@@ -1061,7 +1054,10 @@ void shader_core_ctx::fetch(int iter) {
             assert(m_active_warps >= 0);
 
             if (m_config->is_scalar_core_enabled && m_core_type == SCALAR_CORE) {
-              div_tid_table->invalidate_entry(warp_id); 
+              rdy_table->set_entry(warp_id, div_tid_table->get_entry(warp_id).simt_tid); // Fast lookup bc indexing based on scalar wid
+              div_tid_table->reset_entry(warp_id); // Technically can just invalidate
+              reconverge_start.reset(warp_id);
+              reconverge_done.reset(warp_id);
               curr_state[warp_id] = IDLE; 
               next_state[warp_id] = IDLE; 
               printf("Core %u reclaimied warp %u\n", get_core_type(), warp_id); 
@@ -1148,9 +1144,9 @@ void shader_core_ctx::issue_warp(register_set &pipe_reg_set,
                                  const active_mask_t &active_mask,
                                  unsigned warp_id, unsigned sch_id) {
   // V3 modifications
-  bool skip = false; 
-  unsigned pc, rpc;
-  address_type next_pc = next_inst->pc; 
+  // bool skip = false; 
+  // unsigned pc, rpc;
+  // address_type next_pc = next_inst->pc; 
 
   if (m_config->is_scalar_core_enabled && get_core_type() == SIMT_CORE) {
     shd_warp_t * warp = m_warp[warp_id];    
@@ -1170,7 +1166,7 @@ void shader_core_ctx::issue_warp(register_set &pipe_reg_set,
 
   // End of V3
     warp->set_scalar_regs(scalarized_tids); // Fill any available registers in one cycle with the info that the scalar core would need
-    bool pushed = warp->cycle_through_scalar_regs(); // Controller cycles through registers every cycle and pushes to scalar que
+    warp->cycle_through_scalar_regs(); // Controller cycles through registers every cycle and pushes to scalar que
     
     // Don't need to deassert thread. Check with Khoi before deleting tho. 
     // if (pushed) {
@@ -1222,7 +1218,6 @@ void shader_core_ctx::issue_warp(register_set &pipe_reg_set,
 
   m_warp[warp_id]->ibuffer_free();
   assert(next_inst->valid());
-  if (!skip) {
     **pipe_reg = *next_inst;  // static instruction information
     (*pipe_reg)->issue(
         active_mask, warp_id, m_gpu->gpu_tot_sim_cycle + m_gpu->gpu_sim_cycle,
@@ -1230,10 +1225,10 @@ void shader_core_ctx::issue_warp(register_set &pipe_reg_set,
         m_warp[warp_id]->get_streamID());  // dynamic instruction information
     m_stats->shader_cycle_distro[2 + (*pipe_reg)->active_count()]++;
     func_exec_inst(**pipe_reg);
-  } else {
-    (*pipe_reg)->pc = pc; 
-    next_pc = pc; 
-  }
+  // } else {
+  //   (*pipe_reg)->pc = pc; 
+  //   next_pc = pc; 
+  // }
 
   // Add LDGSTS instructions into a buffer
   unsigned int ldgdepbar_id = m_warp[warp_id]->m_ldgdepbar_id;
@@ -1303,38 +1298,13 @@ void shader_core_ctx::issue_warp(register_set &pipe_reg_set,
     }
   }
 
-  if (!skip) {
     m_scoreboard->reserveRegisters(*pipe_reg);
-  }
 
   updateSIMTStack(warp_id, *pipe_reg);
-  m_warp[warp_id]->set_next_pc(next_pc + next_inst->isize); // Assuming isize doesn't really change
+  m_warp[warp_id]->set_next_pc(next_inst->pc + next_inst->isize); // Assuming isize doesn't really change
 }
 
 void shader_core_ctx::issue() {
-  // v3 addition
-  if (m_config->is_scalar_core_enabled && get_core_type() == SCALAR_CORE) {
-    for (int i = 0; i < m_config->max_warps_per_shader; i++) {
-      unsigned warp_id =
-      (m_last_warp_fetched + 1 + i) % m_config->max_warps_per_shader;
-      // if (m_warp[warp_id]->get_pc() == (address_type) 0x68 && !m_warp[warp_id]->functional_done()) {
-      if (m_warp[warp_id]->get_pc() == div_tid_table->get_entry(warp_id).simt_rpc && !m_warp[warp_id]->functional_done()) {
-      // if (m_warp[warp_id]->get_pc() == div_tid_table->get_entry(warp_id).simt_rpc) {
-        printf("Try to stop warp %u since it is at pc=0x%x\n",warp_id, m_warp[warp_id]->get_pc()); 
-        fflush(stdout); 
-        m_warp[warp_id]->set_completed(0); // Warp is functionally finished
-        m_thread[warp_id]->set_done(); // Thread is finished
-        m_thread[warp_id]->m_cta_info->register_thread_exit(m_thread[warp_id]); // Make the thread exit
-        m_warp[warp_id]->ibuffer_flush(); 
-        warp_exit(warp_id);
-        m_inst_fetch_buffer.m_valid = false; // No more instruction fetching 
-        div_tid_table->set_reconverge(warp_id, true); // Mark warp as ready to reconverge. Will start return fsm once it is descheduled. 
-      }
-    }
-  }
-
-  // end of v3 addition
-
   // Ensure fair round robin issue between schedulers
   unsigned j;
   for (unsigned i = 0; i < schedulers.size(); i++) {
@@ -1497,38 +1467,40 @@ void scheduler_unit::cycle() {
                                                  // units (as in Maxwell and
                                                  // Pascal)
     
+    // v3 addition
+    if (this->m_shader->get_config()->is_scalar_core_enabled && this->m_shader->get_core_type() == SCALAR_CORE) {
+        // fprintf(stdout, "Scalar Stack:\n"); 
+        // this->m_shader->m_simt_stack[warp_id]->print(stdout); 
+        
+        unsigned warp_id = (*iter)->get_warp_id(); 
+        if (this->m_shader->m_warp[warp_id]->get_pc() == this->m_shader->div_tid_table->get_entry(warp_id).simt_rpc && !this->m_shader->m_warp[warp_id]->functional_done()) {
+          printf("Try to stop warp %u since it is at pc=0x%x\n",warp_id, this->m_shader->m_warp[warp_id]->get_pc()); 
+          fflush(stdout); 
+          this->m_shader->m_warp[warp_id]->set_completed(0); // Warp is functionally finished
+          this->m_shader->m_thread[warp_id]->set_done(); // Thread is finished
+          this->m_shader->m_thread[warp_id]->m_cta_info->register_thread_exit(this->m_shader->m_thread[warp_id]); // Make the thread exit
+          this->m_shader->m_warp[warp_id]->ibuffer_flush(); 
+          this->m_shader->warp_exit(warp_id);
+          this->m_shader->m_inst_fetch_buffer.m_valid = false; // No more instruction fetching 
+          this->m_shader->reconverge_start.set(warp_id); 
+
+          // this->m_shader->dec_inst_in_pipeline(); // Need to decrement since doesn' make it to writeback 
+          // continue; // Don't issue the warp
+        }
+    }
+
+
     if (this->m_shader->get_config()->is_scalar_core_enabled && this->m_shader->get_core_type() == SIMT_CORE) {
-      // Code to reassert thread after finished running on scalar core
-      unsigned reconv_tid = this->m_shader->div_tid_table->is_wid_ready_to_reconv(warp_id);
-      if (reconv_tid != -1) {
-        simt_mask_t new_active_mask = this->m_shader->m_simt_stack[warp_id]->get_active_mask();
-        simt_mask_t scalar_mask;  
-        scalar_mask.set(reconv_tid); 
-        new_active_mask |= scalar_mask; 
-        m_simt_stack[warp_id]->set_active_mask(new_active_mask); 
-        unsigned scalar_wid = this->m_shader->div_tid_table->simt_to_scalar(warp_id, reconv_tid); 
-        this->m_shader->div_tid_table->reset_entry(scalar_wid); 
-        // NOTE: This needs to not happen if entry was popped off SIMT stack
+      // SIMT core checks ready table to see if it can return to normal
+      if (this->m_shader->rdy_table->get_entry(warp_id).ready) {
+        unsigned tid = this->m_shader->rdy_table->get_entry(warp_id).tid;
+        this->m_shader->rdy_table->reset_entry(warp_id);
+        // Khoi's code goes here
+  
       }
 
       // fprintf(stdout, "SIMT Stack:\n"); 
       // this->m_shader->m_simt_stack[warp_id]->print(stdout); 
-
-      // Code to not issue warp if thread is set in new top of SIMT stack
-      if (this->m_shader->m_simt_stack[warp_id]->get_size() > 0) {
-        simt_mask_t new_active_mask = this->m_shader->m_simt_stack[warp_id]->get_active_mask();
-        simt_mask_t scalar_mask;  
-        unsigned thread = this->m_shader->div_tid_table->is_wid_in_table(warp_id); 
-        if (thread != -1) {
-          scalar_mask.set(thread); 
-          if ((new_active_mask & scalar_mask).test(thread)) { // Thread is still active in thread mask, so don't issue warp
-              SCHED_DPRINTF(
-              "Warp (warp_id %u, dynamic_warp_id %u) not issued bc thread still active in thread mask\n",
-              (*iter)->get_warp_id(), (*iter)->get_dynamic_warp_id());
-              continue; 
-          }
-        }
-      }
     }
 
     if (warp(warp_id).ibuffer_empty())
@@ -4827,8 +4799,13 @@ void exec_simt_core_cluster::create_shader_core_ctx() {
 
     // Create structures between SIMT and scalar cores and connect
     for (auto &table : divergent_tid_tables) {
-      table.resize(8); // Divergent TID table has 8 spots for 8 threads on scalar core
+      table.resize(SCALAR_BANDWIDTH); // Divergent TID table has 8 spots for 8 threads on scalar core
     }
+
+    for (auto &table : ready_tables) {
+      table.resize(m_config->max_warps_per_shader); // Ready table has 64 entries so the warp can index directly into it without any searching
+    }
+
     for (unsigned i = 0; i < n_simt_cores; i++) {
         m_core[i]->set_scalar_que(&get_que(i)); 
         m_core[i + n_simt_cores]->set_scalar_que(&get_que(i)); 
@@ -4837,6 +4814,10 @@ void exec_simt_core_cluster::create_shader_core_ctx() {
         m_core[i]->set_div_tid_table(&get_div_tid_table(i)); 
         m_core[i + n_simt_cores]->set_div_tid_table(&get_div_tid_table(i)); 
         printf("Connected divergent TID table to Core %u and Core %u\n", i, i + n_simt_cores);
+
+        m_core[i]->set_ready_table(&get_ready_table(i)); 
+        m_core[i + n_simt_cores]->set_ready_table(&get_ready_table(i)); 
+        printf("Connected ready table to Core %u and Core %u\n", i, i + n_simt_cores);
     }
 
   } // end of v3 addition
@@ -4867,9 +4848,10 @@ simt_core_cluster::simt_core_cluster(class gpgpu_sim *gpu, unsigned cluster_id,
   m_memory_stats = mstats;
   m_mem_config = mem_config;
 
+  // Separate structures so can configure number of scalar cores per SIMT core
   scalar_ques.resize(m_config->n_simt_cores_per_cluster / 2); 
   divergent_tid_tables.resize(m_config->n_simt_cores_per_cluster / 2); 
-
+  ready_tables.resize(m_config->n_simt_cores_per_cluster / 2); 
 }
 
 void simt_core_cluster::core_cycle() {
@@ -5421,9 +5403,11 @@ unsigned shd_warp_t::set_scalar_regs(std::vector<unsigned> scalar_tids){
         unsigned tid = scalar_tids.back();
         scalar_tids.pop_back();
 
-        sat_counters[tid] = 0; // Rest Saturating Counters
+        sat_counters[tid] = 0; // Reset Saturating Counters
         scalar_mask[tid] = 1; // Set scalar mask bit after the thread context has been registered
         
+        // printf("push to reg when pc is %x\n", pc); 
+
         reg.m_tid = tid;
         reg.start_pc = pc;
         reg.reconv_pc = rpc;
@@ -5442,12 +5426,8 @@ unsigned shd_warp_t::set_scalar_regs(std::vector<unsigned> scalar_tids){
   return num_scalarized;
 }
 
-bool shd_warp_t::cycle_through_scalar_regs(){
-  bool ret_val = false; 
+void shd_warp_t::cycle_through_scalar_regs(){
   scalar_reg reg = scalar_regs[reg_cntr];
-  fprintf(stdout,"Reg counter value %d\n",reg_cntr);
-  fprintf(stdout,"Scalar Register State for Warp %d\n",m_warp_id);
-  fprintf(stdout,"Thread ID | Start PC | Reconvergence PC | Dirty\n");
 
   if(!get_elected_status()){ // Waits until elected thread is pushed to scalar que
     if(reg.dirty){
@@ -5463,17 +5443,6 @@ bool shd_warp_t::cycle_through_scalar_regs(){
 
       fprintf(stdout,"Elected to scalarize thread %d in warp %d\n",reg.m_tid,m_warp_id);
 
-  for(int i=SCALAR_BANDWIDTH-1; i>=0; i--){
-    scalar_reg que_entry = scalar_regs[i];
-    fprintf(stdout,"%d        | %x       | %x               | %d\n",que_entry.m_tid,que_entry.start_pc,que_entry.reconv_pc,que_entry.dirty);
-  }
-
-  if(reg.dirty){
-    bool pushed = m_shader->push_scalar_que(reg.m_tid,m_warp_id,reg.start_pc,reg.reconv_pc);
-    ret_val = true;
-    fprintf(stdout,"Scalarized thread %d in warp %d\n",reg.m_tid,m_warp_id);
-    
-    if(pushed){
       reg.dirty = 0;
       scalar_regs[reg_cntr] = reg;
     }
@@ -5485,9 +5454,31 @@ bool shd_warp_t::cycle_through_scalar_regs(){
     else{
       reg_cntr++;
     }
-  return ret_val; 
+  }
 }
+
+void shader_core_ctx::rr_top_level_scheduler(){
+  shd_warp_t* warp = m_warp[warp_cntr];
+  // fprintf(stdout,"Top Level scheduler checking Warp %d\n",warp_cntr);
+  if(warp->get_elected_status()){
+    bool pushed = push_scalar_que(warp->get_elected_thread());
+    
+    if(pushed){
+      fprintf(stdout,"Scalarized thread %d in warp %d\n",warp->get_elected_thread().m_tid,warp->get_elected_thread().m_warp_id);
+      warp->set_elected_status((bool) 0);
+      display_scalar_que();
+    }
+  }
+
+  if(warp_cntr == m_config->max_warps_per_shader-1){
+    warp_cntr = 0;
+  }
+
+  else{
+    warp_cntr++;
+  }
 }
+
 void shader_core_ctx::return_fsm_cycle() {
   for (int warp_id = 0; warp_id < SCALAR_BANDWIDTH; warp_id++) {
     curr_state[warp_id] = next_state[warp_id]; 
@@ -5501,16 +5492,16 @@ void shader_core_ctx::return_fsm_update(int warp_id) {
   switch(curr_state[warp_id]) {
     case IDLE:
       // printf("Core %u, warp %u is in IDLE state\n", get_core_type(), warp_id); 
-      if (div_tid_table->get_entry(warp_id).reconverge) {
+      if (reconverge_start.test(warp_id) && !reconverge_done.test(warp_id)) {
           next_state[warp_id] = PULL; 
       }
       break; 
     case PULL:
       printf("Core %u, warp %u is in PULL state\n", get_core_type(), warp_id); 
       if (!m_written_register_board->pendingWrites(warp_id)) { // If WRB is empty, go back to IDLE
-          printf("Core %u, warp %u has nothing to pull \n", get_core_type(), warp_id, *(wrb_its[warp_id])); 
+          printf("Core %u, warp %u has nothing to pull \n", get_core_type(), warp_id); 
           next_state[warp_id] = IDLE; 
-          div_tid_table->set_reconverge_done(warp_id, true); 
+          reconverge_done.set(warp_id); 
           wrb_its[warp_id] = m_written_register_board->get_regtable(warp_id).begin(); 
       } else {
           printf("Core %u, warp %u, reg %u pulled from written register board\n", get_core_type(), warp_id, *(wrb_its[warp_id])); 
@@ -5541,7 +5532,7 @@ void shader_core_ctx::return_fsm_update(int warp_id) {
         m_written_register_board->releaseRegister(warp_id, *(wrb_its[warp_id]++)); 
         next_state[warp_id] = PULL; 
       } else { // Once all regs in WRB were processed, ready to free the warp and IDLE the return fsm
-        div_tid_table->set_reconverge_done(warp_id, true); 
+        reconverge_done.set(warp_id); 
         next_state[warp_id] = IDLE; 
         wrb_its[warp_id] = m_written_register_board->get_regtable(warp_id).begin(); 
         // m_fetched_register_board->reset(); // Reset FRB for the next assigned warp

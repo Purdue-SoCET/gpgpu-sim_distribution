@@ -1337,6 +1337,9 @@ class function_info {
     // Scalar core shouldn't do index offset
     unsigned index = PC;
     // if (core_type == SIMT_CORE) { // core_type isn't getting passed properly for some reason
+    
+    // printf("index is %x and start pc is %x and warp size is %d\n", index, m_start_PC, warp_size); 
+    // print_insn(index, stdout); 
     if (warp_size != 1) { 
       index -= m_start_PC; 
     } 

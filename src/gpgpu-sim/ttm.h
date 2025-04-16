@@ -30,14 +30,17 @@
 #include <vector>
 
 typedef struct div_tid_table_entry {
-    bool valid; 
-    bool reconverge;
-    bool reconverge_done;  
+    bool valid;  
     unsigned scalar_tid; 
     unsigned simt_tid;
     unsigned simt_wid; 
     address_type simt_rpc;
 } div_tid_table_entry;
+
+typedef struct ready_table_entry {
+    bool ready;
+    unsigned tid; 
+} ready_table_entry; 
 
 enum return_fsm_states {
     IDLE,
@@ -51,6 +54,37 @@ typedef struct wrb_entry {
     unsigned wid;
     unsigned regnum; 
 } wrb_entry;
+
+
+class ready_table {
+    // Rows are SIMT core warp ID
+    // Each warp ID has a ready bit and the thread ID that needs to be reasserted 
+    private:
+    std::vector<ready_table_entry> ready_table_arr;
+    int num_entries; 
+
+    public:
+    // Default constructor - starts empty
+    ready_table() : num_entries(0) {}
+
+    // Constructor that sets size immediately
+    ready_table(int n) {
+        resize(n); 
+    }
+
+    void resize(int n) {
+        num_entries = n; 
+        ready_table_arr.resize(n); 
+        for (int i = 0; i < n; i++) {
+            ready_table_arr[i].ready = false; 
+            ready_table_arr[i].tid = -1; 
+        }
+    } 
+
+    void set_entry(unsigned wid, unsigned tid);
+    void reset_entry(unsigned wid); 
+    ready_table_entry get_entry(unsigned wid); 
+};
 
 class divergent_tid_table {
     private:
@@ -71,8 +105,6 @@ class divergent_tid_table {
         divergent_tid_table_arr.resize(n); 
         for (int i = 0; i < n; i++) {
             divergent_tid_table_arr[i].valid = false; 
-            divergent_tid_table_arr[i].reconverge = false; 
-            divergent_tid_table_arr[i].reconverge_done = false; 
             divergent_tid_table_arr[i].scalar_tid = -1; 
             divergent_tid_table_arr[i].simt_tid = -1; 
             divergent_tid_table_arr[i].simt_wid = -1; 
@@ -88,7 +120,6 @@ class divergent_tid_table {
     void print(); 
     unsigned is_wid_in_table(unsigned simt_wid); 
     void invalidate_entry(unsigned warp_id);
-    unsigned is_wid_ready_to_reconv(unsigned simt_wid); 
     unsigned simt_to_scalar(unsigned simt_wid, unsigned simt_tid);
 
 };

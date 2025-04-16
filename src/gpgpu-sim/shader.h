@@ -326,7 +326,7 @@ class shd_warp_t {
 
   unsigned set_scalar_regs(std::vector<unsigned> scalar_tids); // Sets the threads to be scalarized in the scalar registers if there is space, returns number of registers scalarized
 
-  bool cycle_through_scalar_regs(); // Simulates cycle by cycle controller that iterates over scalar registers and pushes to the scalar que
+  void cycle_through_scalar_regs(); // Simulates cycle by cycle controller that iterates over scalar registers and pushes to the scalar que
   // Returns whether a push occured or not
 
   bool all_on_scalar(active_mask_t simt_mask){
@@ -2263,6 +2263,9 @@ class shader_core_ctx : public core_t {
     div_tid_table = tb; 
   }
 
+  void set_ready_table(ready_table *tb) {
+    rdy_table = tb; 
+  }
 
   void squash_fetch(unsigned warp_id); 
 
@@ -2641,10 +2644,14 @@ class shader_core_ctx : public core_t {
   unsigned long long m_last_inst_gpu_tot_sim_cycle;
 
   // V3 arch structure
+
   unsigned warp_cntr;
   std::deque<scalar_que_entry> *scalar_que;
-  divergent_tid_table *div_tid_table; 
+  divergent_tid_table *div_tid_table;
+  ready_table *rdy_table; // NOTE: rdy_table is the pointer, ready_table is the type!
 
+  std::bitset<SCALAR_BANDWIDTH> reconverge_start; 
+  std::bitset<SCALAR_BANDWIDTH> reconverge_done; 
 
   // general information
   unsigned m_sid;  // shader id
@@ -2773,6 +2780,8 @@ class exec_shader_core_ctx : public shader_core_ctx {
     create_schedulers();
     // fprintf(stdout, "Number of Warps per shader core: %d\n", schedulers[0]->m_supervised_warps.size());
     create_exec_pipeline();
+
+
   }
 
   virtual void checkExecutionStatusAndUpdate(warp_inst_t &inst, unsigned t,
@@ -2861,6 +2870,7 @@ class simt_core_cluster {
 
   std::vector<std::deque<scalar_que_entry>> scalar_ques;
   std::vector<divergent_tid_table> divergent_tid_tables; 
+  std::vector<ready_table> ready_tables; 
 
   public:
     // REMOVE LATER
@@ -2872,6 +2882,10 @@ class simt_core_cluster {
 
     divergent_tid_table& get_div_tid_table(unsigned core_id) {
       return divergent_tid_tables.at(core_id); 
+    }
+
+    ready_table& get_ready_table(unsigned core_id) {
+      return ready_tables.at(core_id); 
     }
 };
 
