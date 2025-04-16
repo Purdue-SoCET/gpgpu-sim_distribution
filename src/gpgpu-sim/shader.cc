@@ -5399,6 +5399,10 @@ void shd_warp_t::clear_counters(unsigned tid) {
     sat_counters[i] = 0; 
   }
   scalar_mask[tid] = 0;
+  scalar_regs[tid].dirty = 0; 
+  scalar_regs[tid].m_tid = 0;
+  scalar_regs[tid].start_pc = 0;
+  scalar_regs[tid].reconv_pc = 0;
 }
 
 
@@ -5437,14 +5441,14 @@ unsigned shd_warp_t::set_scalar_regs(std::vector<unsigned> scalar_tids){
 bool shd_warp_t::cycle_through_scalar_regs(){
   bool ret_val = false; 
   scalar_reg reg = scalar_regs[reg_cntr];
-  // fprintf(stdout,"Reg counter value %d\n",reg_cntr);
-  // fprintf(stdout,"Scalar Register State for Warp %d\n",m_warp_id);
-  // fprintf(stdout,"Thread ID | Start PC | Reconvergence PC | Dirty\n");
+  fprintf(stdout,"Reg counter value %d\n",reg_cntr);
+  fprintf(stdout,"Scalar Register State for Warp %d\n",m_warp_id);
+  fprintf(stdout,"Thread ID | Start PC | Reconvergence PC | Dirty\n");
 
-  // for(int i=SCALAR_BANDWIDTH-1; i>=0; i--){
-  //   scalar_reg que_entry = scalar_regs[i];
-  //   fprintf(stdout,"%d        | %x       | %x               | %d\n",que_entry.m_tid,que_entry.start_pc,que_entry.reconv_pc,que_entry.dirty);
-  // }
+  for(int i=SCALAR_BANDWIDTH-1; i>=0; i--){
+    scalar_reg que_entry = scalar_regs[i];
+    fprintf(stdout,"%d        | %x       | %x               | %d\n",que_entry.m_tid,que_entry.start_pc,que_entry.reconv_pc,que_entry.dirty);
+  }
 
   if(reg.dirty){
     bool pushed = m_shader->push_scalar_que(reg.m_tid,m_warp_id,reg.start_pc,reg.reconv_pc);
@@ -5467,6 +5471,10 @@ bool shd_warp_t::cycle_through_scalar_regs(){
   }
   return ret_val; 
 }
+
+// does this have to cycle one reg per cycle?
+// when does reg and count reset? 
+// edge case if thread passed-> on simt stack, thread ends-> new mask gets a wrong thread set when ends on scalar
 
 
 void shader_core_ctx::return_fsm_cycle() {
