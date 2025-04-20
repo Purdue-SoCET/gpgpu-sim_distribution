@@ -4535,7 +4535,7 @@ void opndcoll_rfu_t::collector_unit_t::dispatch() {
 void exec_simt_core_cluster::create_shader_core_ctx() {
     unsigned total_cores = m_config->n_simt_cores_per_cluster;
     unsigned n_scalar_cores = total_cores / 2;  // Half Scalar Cores
-    unsigned n_simt_cores = total_cores - n_simt_cores;  // Remaining SIMT cores
+    unsigned n_simt_cores = total_cores - n_scalar_cores;  // Remaining SIMT cores
 
     // Validate total cores
     if (total_cores % 2 != 0) {
@@ -4563,7 +4563,6 @@ void exec_simt_core_cluster::create_shader_core_ctx() {
         m_core[i] = new exec_shader_core_ctx(m_gpu, this, sid, m_cluster_id,
                                             m_config, m_mem_config, m_stats, n_simt_cores);
         m_core[i]->set_core_type(SCALAR_CORE);  // Mark as scalar core
-        //printf("Created scalar core %u\n", i);
         m_core_sim_order.push_back(i);
     }
 }
