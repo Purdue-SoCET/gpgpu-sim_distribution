@@ -97,7 +97,7 @@ void exec_shader_core_ctx::create_shd_warp() {
 
     if (m_config->is_scalar_core_enabled) {
     CoreType core_type = get_core_type();
-    // printf("Creating warps for core type: %s\n", (core_type == SIMT_CORE) ? "SIMT_CORE" : "SCALAR_CORE");
+    printf("Creating warps for core type: %s\n", (core_type == SIMT_CORE) ? "SIMT_CORE" : "SCALAR_CORE");
 
     for (unsigned k = 0; k < m_config->max_warps_per_shader; ++k) {
 
@@ -1148,7 +1148,8 @@ void shader_core_ctx::issue_warp(register_set &pipe_reg_set,
   // unsigned pc, rpc;
   // address_type next_pc = next_inst->pc; 
 
-  if (m_config->is_scalar_core_enabled && get_core_type() == SIMT_CORE) {
+  fprintf(stderr, "Scalar_core_enabled = %d\n", m_config->is_scalar_core_enabled);
+  if (m_config->is_scalar_core_enabled && (get_core_type() == SIMT_CORE)) {
     shd_warp_t * warp = m_warp[warp_id];    
     active_mask_t result_mask = warp->get_result_mask(active_mask); // Get thread mask that will run on SIMT core by anding inverse scalar mask and simt stack thread mask
 
@@ -1436,6 +1437,7 @@ void scheduler_unit::order_by_priority(
 }
 
 void scheduler_unit::cycle() {
+  fprintf(stderr, "Get to scheduler_unit::cycle\n");
   SCHED_DPRINTF("scheduler_unit::cycle()\n");
   bool valid_inst =
       false;  // there was one warp with a valid instruction to issue (didn't
@@ -1562,7 +1564,12 @@ void scheduler_unit::cycle() {
             bool reached_conv = false;
             if (conv_points.find(pc) != conv_points.end()) reached_conv = true;
 
-            if (!(reached_conv && warp(warp_id).at_least_one_on_scalar(active_mask)) && 
+            // Problem: Always False
+            // reached_conv && onScalar = True
+            bool onScalar = warp(warp_id).at_least_one_on_scalar(active_mask);
+            //Checking if the thread has reach convergence, is there any thread on scalar 
+            fprintf(stderr, "pI->op = %d\n", pI->op);
+            if (!(reached_conv && onScalar) && 
                 ((pI->op == LOAD_OP) || (pI->op == STORE_OP) ||
                 (pI->op == MEMORY_BARRIER_OP) ||
                 (pI->op == TENSOR_CORE_LOAD_OP) ||
@@ -1573,7 +1580,7 @@ void scheduler_unit::cycle() {
                    previous_issued_inst_exec_type != exec_unit_type_t::MEM)) {
                 m_shader->issue_warp(*m_mem_out, pI, active_mask, warp_id,
                                      m_id);
-                // fprintf(stdout, "warp_id=%d, core_id=%d, active_mask=%s\n", warp_id,core_id, active_mask.to_string().c_str());
+                fprintf(stdout, "warp_id=%d, core_id=%d, active_mask=%s\n", warp_id,core_id, active_mask.to_string().c_str());
                 issued++;
                 issued_inst = true;
                 warp_inst_issued = true;
@@ -4752,10 +4759,12 @@ void opndcoll_rfu_t::collector_unit_t::dispatch() {
 }
 
 void exec_simt_core_cluster::create_shader_core_ctx() {
+  fprintf(stderr, "\nEntering exec_simt_core_cluster::create_shader_core_ctx\n");
   // v3 addition
   if (m_config->is_scalar_core_enabled) { 
     unsigned total_cores = m_config->n_simt_cores_per_cluster;
-    unsigned n_simt_cores = total_cores / 2;  // Half SIMT cores
+    fprintf(stderr, "total_cores = %d\n", total_cores);
+    unsigned n_simt_cores = (total_cores > 1) ? total_cores / 2 : 1;  // Half SIMT cores
     unsigned n_scalar_cores = total_cores - n_simt_cores;  // Remaining scalar cores
 
     // Validate total cores
@@ -4766,6 +4775,7 @@ void exec_simt_core_cluster::create_shader_core_ctx() {
 
     m_core = new shader_core_ctx * [total_cores];
 
+    fprintf(stderr, "n_simt_core = %d\n", n_simt_cores);
     // Create SIMT cores
     for (unsigned i = 0; i < n_simt_cores; i++) {
         unsigned sid = m_config->cid_to_sid(i, m_cluster_id);
@@ -4805,14 +4815,13 @@ void exec_simt_core_cluster::create_shader_core_ctx() {
     for (auto &table : ready_tables) {
       table.resize(m_config->max_warps_per_shader); // Ready table has 64 entries so the warp can index directly into it without any searching
     }
-
     for (unsigned i = 0; i < n_simt_cores; i++) {
         m_core[i]->set_scalar_que(&get_que(i)); 
-        m_core[i + n_simt_cores]->set_scalar_que(&get_que(i)); 
-        printf("Connected scalar que to Core %u and Core %u\n", i, i + n_simt_cores);
+        m_core[i + n_simt_cores]->set_scalar_que(&get_que(i)); //Problem occurs when there is only 1 simt_core per cluster 
+        printf("Connected scalar_que to Core %u and Core %u\n", i, i + n_simt_cores);
 
         m_core[i]->set_div_tid_table(&get_div_tid_table(i)); 
-        m_core[i + n_simt_cores]->set_div_tid_table(&get_div_tid_table(i)); 
+        m_core[i + n_simt_cores]->set_div_tid_table(&get_div_tid_table(i));
         printf("Connected divergent TID table to Core %u and Core %u\n", i, i + n_simt_cores);
 
         m_core[i]->set_ready_table(&get_ready_table(i)); 
@@ -4849,7 +4858,8 @@ simt_core_cluster::simt_core_cluster(class gpgpu_sim *gpu, unsigned cluster_id,
   m_mem_config = mem_config;
 
   // Separate structures so can configure number of scalar cores per SIMT core
-  scalar_ques.resize(m_config->n_simt_cores_per_cluster / 2); 
+  int scalar_num = (m_config->n_simt_cores_per_cluster > 1)? m_config->n_simt_cores_per_cluster / 2 : 1;
+  scalar_ques.resize(scalar_num); 
   divergent_tid_tables.resize(m_config->n_simt_cores_per_cluster / 2); 
   ready_tables.resize(m_config->n_simt_cores_per_cluster / 2); 
 }
@@ -5370,6 +5380,7 @@ void shd_warp_t::increment_sat_counters(active_mask_t result_thread_mask){
 std::vector<unsigned> shd_warp_t::check_sat_counters(){
   std::vector<unsigned> scalar_tids;
   for(unsigned i=0; i<m_warp_size; i++){
+    // fprintf(stderr, "sat_counter = %d\n", sat_counters[i]);
     if(sat_counters[i] == SAT_LIMIT && ~scalar_mask[i] && in_div_region()){
       scalar_tids.push_back(i);
     }

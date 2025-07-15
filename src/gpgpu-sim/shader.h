@@ -334,6 +334,8 @@ class shd_warp_t {
   }
 
   bool at_least_one_on_scalar(active_mask_t simt_mask){
+    // fprintf(stderr, "scalar_mask = %d\n", scalar_mask);
+    // fprintf(stderr, "simt_mask = %d\n", simt_mask);
     return (scalar_mask & simt_mask).any();
   }
 
@@ -1817,7 +1819,7 @@ class shader_core_config : public core_config {
   unsigned reg_file_port_throughput;
 
   // v3 addition
-  bool is_scalar_core_enabled; 
+  bool is_scalar_core_enabled = true; 
   // end of v3 addition
 
   // specialized unit config strings
@@ -2256,7 +2258,8 @@ class shader_core_ctx : public core_t {
   scalar_que_entry pop_scalar_que();
 
   void set_scalar_que(std::deque<scalar_que_entry> *sq) {
-    scalar_que = sq; 
+    fprintf(stderr, "Entering set_scalar_que\n");
+    scalar_que = sq;
   }
 
   void set_div_tid_table(divergent_tid_table *tb) {
@@ -2877,7 +2880,8 @@ class simt_core_cluster {
     bool test; 
 
     std::deque<scalar_que_entry>& get_que(unsigned core_id) {
-      return scalar_ques.at(core_id); 
+      fprintf(stderr, "core_id = %d\n", core_id);
+      return scalar_ques.at(core_id);
     }
 
     divergent_tid_table& get_div_tid_table(unsigned core_id) {

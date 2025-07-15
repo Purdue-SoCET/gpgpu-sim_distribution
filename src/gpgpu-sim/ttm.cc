@@ -75,6 +75,7 @@ div_tid_table_entry divergent_tid_table::get_entry(unsigned scalar_tid) {
 }
 
 int divergent_tid_table::find_free_entry() {
+    // fprintf(stderr, "num_entries = %d\n", num_entries);
     for (int i = 0; i < num_entries; i++) {
         if (!divergent_tid_table_arr[i].valid) { // Nothing in that spot
             return i; 
