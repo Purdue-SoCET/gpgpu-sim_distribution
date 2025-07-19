@@ -1148,7 +1148,7 @@ void shader_core_ctx::issue_warp(register_set &pipe_reg_set,
   // unsigned pc, rpc;
   // address_type next_pc = next_inst->pc; 
 
-  fprintf(stderr, "Scalar_core_enabled = %d\n", m_config->is_scalar_core_enabled);
+  // fprintf(stderr, "Scalar_core_enabled = %d\n", m_config->is_scalar_core_enabled);
   if (m_config->is_scalar_core_enabled && (get_core_type() == SIMT_CORE)) {
     shd_warp_t * warp = m_warp[warp_id];    
     active_mask_t result_mask = warp->get_result_mask(active_mask); // Get thread mask that will run on SIMT core by anding inverse scalar mask and simt stack thread mask
@@ -1437,7 +1437,6 @@ void scheduler_unit::order_by_priority(
 }
 
 void scheduler_unit::cycle() {
-  fprintf(stderr, "Get to scheduler_unit::cycle\n");
   SCHED_DPRINTF("scheduler_unit::cycle()\n");
   bool valid_inst =
       false;  // there was one warp with a valid instruction to issue (didn't
@@ -1498,7 +1497,7 @@ void scheduler_unit::cycle() {
         unsigned tid = this->m_shader->rdy_table->get_entry(warp_id).tid;
         this->m_shader->rdy_table->reset_entry(warp_id);
         // Khoi's code goes here
-  
+        
       }
 
       // fprintf(stdout, "SIMT Stack:\n"); 
@@ -1564,11 +1563,8 @@ void scheduler_unit::cycle() {
             bool reached_conv = false;
             if (conv_points.find(pc) != conv_points.end()) reached_conv = true;
 
-            // Problem: Always False
-            // reached_conv && onScalar = True
             bool onScalar = warp(warp_id).at_least_one_on_scalar(active_mask);
             //Checking if the thread has reach convergence, is there any thread on scalar 
-            fprintf(stderr, "pI->op = %d\n", pI->op);
             if (!(reached_conv && onScalar) && 
                 ((pI->op == LOAD_OP) || (pI->op == STORE_OP) ||
                 (pI->op == MEMORY_BARRIER_OP) ||
