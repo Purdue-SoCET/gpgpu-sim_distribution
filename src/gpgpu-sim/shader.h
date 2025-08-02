@@ -333,16 +333,12 @@ class shd_warp_t {
     return (~scalar_mask & simt_mask).none(); //If simt mask & ~scalar mask is all 0s, that means all threads are on scalar core
   }
 
-  bool at_least_one_on_scalar(active_mask_t simt_mask){
-    // fprintf(stderr, "scalar_mask = %d\n", scalar_mask);
-    // fprintf(stderr, "simt_mask = %d\n", simt_mask);
-    return (scalar_mask & simt_mask).any();
-  }
+  bool check_at_least_one_on_scalar(shader_core_ctx * m_shader);
 
   bool all_on_simt(active_mask_t simt_mask){
     return (scalar_mask & simt_mask).none(); //If simt mask & scalar mask is all 0s, that means all threads are on simt core
   }
-
+  
   active_mask_t get_result_mask(active_mask_t simt_mask){
     return ~scalar_mask & simt_mask;
   }
@@ -2258,7 +2254,7 @@ class shader_core_ctx : public core_t {
   scalar_que_entry pop_scalar_que();
 
   void set_scalar_que(std::deque<scalar_que_entry> *sq) {
-    fprintf(stderr, "Entering set_scalar_que\n");
+    // fprintf(stderr, "Entering set_scalar_que\n");
     scalar_que = sq;
   }
 
@@ -2634,6 +2630,10 @@ class shader_core_ctx : public core_t {
                                    new_addr_type *translated_addrs);
 
   void read_operands();
+  
+  //V3 Addition
+  
+  //
 
   void execute();
 
@@ -2742,6 +2742,7 @@ class shader_core_ctx : public core_t {
   // v3 addition
   public:
     bool steal;
+    simt_core_cluster * get_cluster() {return m_cluster;} 
     std::array<bool, SCALAR_BANDWIDTH> reconverge = {};
     return_fsm_states curr_state[SCALAR_BANDWIDTH];
     return_fsm_states next_state[SCALAR_BANDWIDTH];
@@ -2870,17 +2871,20 @@ class simt_core_cluster {
   unsigned m_cta_issue_next_core;
   std::list<unsigned> m_core_sim_order;
   std::list<mem_fetch *> m_response_fifo;
-
-  std::vector<std::deque<scalar_que_entry>> scalar_ques;
-  std::vector<divergent_tid_table> divergent_tid_tables; 
+  // std::vector<std::deque<scalar_que_entry>> scalar_ques;
+  // std::vector<divergent_tid_table> divergent_tid_tables; 
+  
   std::vector<ready_table> ready_tables; 
 
   public:
     // REMOVE LATER
     bool test; 
 
+    std::vector<std::deque<scalar_que_entry>> scalar_ques;
+    std::vector<divergent_tid_table> divergent_tid_tables; 
+
     std::deque<scalar_que_entry>& get_que(unsigned core_id) {
-      fprintf(stderr, "core_id = %d\n", core_id);
+      // fprintf(stderr, "core_id = %d\n", core_id);
       return scalar_ques.at(core_id);
     }
 

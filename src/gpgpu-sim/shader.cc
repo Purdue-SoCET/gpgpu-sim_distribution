@@ -1148,7 +1148,6 @@ void shader_core_ctx::issue_warp(register_set &pipe_reg_set,
   // unsigned pc, rpc;
   // address_type next_pc = next_inst->pc; 
 
-  // fprintf(stderr, "Scalar_core_enabled = %d\n", m_config->is_scalar_core_enabled);
   if (m_config->is_scalar_core_enabled && (get_core_type() == SIMT_CORE)) {
     shd_warp_t * warp = m_warp[warp_id];    
     active_mask_t result_mask = warp->get_result_mask(active_mask); // Get thread mask that will run on SIMT core by anding inverse scalar mask and simt stack thread mask
@@ -1563,7 +1562,9 @@ void scheduler_unit::cycle() {
             bool reached_conv = false;
             if (conv_points.find(pc) != conv_points.end()) reached_conv = true;
 
-            bool onScalar = warp(warp_id).at_least_one_on_scalar(active_mask);
+            bool onScalar = warp(warp_id).check_at_least_one_on_scalar(m_shader);
+            fprintf(stdout, "onScalar = %d ", onScalar);
+            fprintf(stdout, "reached_con = %d\n", reached_conv);
             //Checking if the thread has reach convergence, is there any thread on scalar 
             if (!(reached_conv && onScalar) && 
                 ((pI->op == LOAD_OP) || (pI->op == STORE_OP) ||
@@ -4443,6 +4444,11 @@ void shd_warp_t::print_ibuffer(FILE *fout) const {
   fprintf(fout, "\n");
 }
 
+//V3 Addition
+bool shd_warp_t::check_at_least_one_on_scalar(shader_core_ctx * m_shader){//if there is something on the scalar queue or the div_tid_table, its means that the scalar core is active
+  return !m_shader->get_cluster()->divergent_tid_tables.empty() || !m_shader->get_cluster()->scalar_ques.empty();
+}
+
 void opndcoll_rfu_t::add_cu_set(unsigned set_id, unsigned num_cu,
                                 unsigned num_dispatch) {
   m_cus[set_id].reserve(num_cu);  // this is necessary to stop pointers in m_cu
@@ -4824,7 +4830,7 @@ void exec_simt_core_cluster::create_shader_core_ctx() {
         m_core[i + n_simt_cores]->set_ready_table(&get_ready_table(i)); 
         printf("Connected ready table to Core %u and Core %u\n", i, i + n_simt_cores);
     }
-
+    fprintf(stderr, "Finished V3 Addition\n");
   } // end of v3 addition
   else {
     m_core = new shader_core_ctx *[m_config->n_simt_cores_per_cluster];
