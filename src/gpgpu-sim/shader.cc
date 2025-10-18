@@ -1357,6 +1357,31 @@ void scheduler_unit::cycle() {
       bool warp_inst_issued = false;
       unsigned pc, rpc;
       m_shader->get_pdom_stack_top_info(warp_id, pI, &pc, &rpc);
+
+      // --------------- NEW: block to enforce scalarization synchronization ----------------
+      // 1) If this warp is waiting because we moved all SIMT threads to scalar,
+      //    do not issue anything (SIMT is waiting for scalar return)
+      if (warp(warp_id).is_waiting_for_scalar()) {
+          // do not issue; skip this warp (but do not demote it from m_next_cycle_prioritized_warps)
+          SCHED_DPRINTF("Warp %u waiting for scalar return; skipping issue\n", warp_id);
+          break; // or continue in the outer loop depending on desired fairness
+      }
+
+      // 2) If the warp has threads actively running on scalar that reconverge at rpc,
+      //    and there are threads on SIMT with the same reconv point, then
+      //    prevent instruction(s) that would progress past RPC on the SIMT side.
+      //    The simplest robust policy: if has_scalar_threads_with_rpc(rpc) is true
+      //    and the next SIMT PC would be >= rpc (or instruction PC==rpc),
+      //    do not issue instructions (stall) until scalar finishes
+      if (rpc != (address_type)NO_BRANCH_DIVERGENCE && warp(warp_id).has_scalar_threads_with_rpc(rpc)) {
+          // if the next instruction is at or would cross the RPC, don't issue
+          if (pc >= rpc) { // '>' for extra safety
+              SCHED_DPRINTF("Warp %u: scalar threads active for RPC %x; deferring issue\n", warp_id, rpc);
+              continue; // skip issuing for this warp this cycle
+          }
+      }
+      // --------------- END NEW ----------------------------------------------------------------
+
       SCHED_DPRINTF(
           "Warp (warp_id %u, dynamic_warp_id %u) has valid instruction (%s)\n",
           (*iter)->get_warp_id(), (*iter)->get_dynamic_warp_id(),
@@ -5094,6 +5119,27 @@ unsigned shd_warp_t::set_scalar_regs(std::vector<unsigned> scalar_tids){
         // fprintf(stdout,"Register %d on warp %d has dirty bit %d\n",i,m_warp_id,reg.dirty);
       }
     }
+  }
+
+  // After setting scalar regs, fix warp mask logic to remove newly-scalarized threads
+  unsigned rpc, pc;
+  get_pcs(&rpc, &pc);
+
+  // If all active threads are now on scalar core (SIMT has no remaining active lanes),
+  // set warp PC to RPC and mark it waiting for scalar return.
+  active_mask_t simt_mask; // build simt_mask representing currently-active lanes on SIMT
+  // Build simt_mask from m_active_threads but remove scalar threads:
+  simt_mask = m_active_threads; // (m_active_threads is a bitset) blocks scalarized/divergent threads from issuing
+  active_mask_t result_mask = get_result_mask(simt_mask); // threads remaining on SIMT
+
+  if(result_mask.none()) {
+      // no threads on SIMT side; jump SIMT warp to reconvergence PC and wait
+      set_next_pc(rpc);                 // effectively "jump" to reconvergence
+      set_waiting_for_scalar(true);     // scheduler will see this and stall until return
+      // Optionally flush ibuffer so SIMT won't execute old instructions
+      ibuffer_flush();
+      // Debug
+      fprintf(stdout,"Warp %u moved all threads to scalar; setting PC to reconv %x and waiting\n", m_warp_id, rpc);
   }
 
   return num_scalarized;

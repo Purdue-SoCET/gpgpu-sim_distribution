@@ -207,6 +207,42 @@ class shd_warp_t {
 
   void print(FILE *fout) const;
   void print_ibuffer(FILE *fout) const;
+  
+  // tracks scalar core status
+  void set_waiting_for_scalar(bool v) { waiting_for_scalar = v; }
+  bool is_waiting_for_scalar() const { return waiting_for_scalar; }
+
+  // tracks if a warps's threads that are currently running on scalar core are executing toward the same rpc as the warp's rpc
+  bool has_scalar_threads_with_rpc(address_type rpc) const {
+    for (unsigned i = 0; i < scalar_regs.size(); ++i) {
+      if (scalar_regs[i].dirty && scalar_regs[i].reconv_pc == rpc) return true;
+    }
+    return false;
+  }
+
+  // called when a scalar thread returns to the SIMT core
+  void on_scalar_thread_return(unsigned tid, address_type reconv_pc) {
+      // clear scalar_mask for this tid
+      scalar_mask.reset(tid);
+      // mark scalar register entry free (search and clear)
+      for (unsigned i=0;i<scalar_regs.size();i++){
+          if (scalar_regs[i].m_tid == tid) {
+              scalar_regs[i].dirty = 0;
+              break;
+          }
+      }
+      // if no more scalar threads for this warp at this reconv point, clear waiting flag
+      bool any_scalar_left = false;
+      for (unsigned i=0;i<scalar_regs.size();i++){
+          if (scalar_regs[i].dirty && scalar_regs[i].reconv_pc == reconv_pc) { any_scalar_left = true; break; }
+      }
+      if (!any_scalar_left) {
+          set_waiting_for_scalar(false);
+          // m_next_pc should already be rpc; resume normal issuing from m_next_pc
+          fprintf(stdout,"Warp %u: all scalar threads for RPC %x returned - resume SIMT\n", m_warp_id, reconv_pc);
+      }
+  }
+
 
   unsigned get_n_completed() const { return n_completed; }
   void set_completed(unsigned lane) {
@@ -377,6 +413,9 @@ class shd_warp_t {
   std::bitset<MAX_WARP_SIZE> m_active_threads;
 
   bool m_imiss_pending;
+
+  // tracks scalar core status
+  bool waiting_for_scalar = false;
 
   struct ibuffer_entry {
     ibuffer_entry() {
