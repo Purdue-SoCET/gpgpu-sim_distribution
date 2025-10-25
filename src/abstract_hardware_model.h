@@ -1434,6 +1434,7 @@ class register_set {
     }
     return reg_id;
   }
+
   unsigned get_schd_id(unsigned reg_id) {
     assert(not regs[reg_id]->empty());
     return regs[reg_id]->get_schd_id();
@@ -1442,9 +1443,11 @@ class register_set {
     warp_inst_t **free = get_free();
     move_warp(*free, src);
   }
+
   // void copy_in( warp_inst_t* src ){
   //   src->copy_contents_to(*get_free());
-  //}
+  // }
+  
   void move_in(bool sub_core_model, unsigned reg_id, warp_inst_t *&src) {
     warp_inst_t **free;
     if (!sub_core_model) {
