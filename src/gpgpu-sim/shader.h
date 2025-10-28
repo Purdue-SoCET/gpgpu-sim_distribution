@@ -73,7 +73,28 @@
 
 #define WRITE_MASK_SIZE 8
 
+// V3 Definitions
+#define SAT_LIMIT 10
+#define SCALAR_BANDWIDTH 8
+#define SCALAR_CORE_CAPACITY 16
+
 class gpgpu_context;
+
+// V3 arch type definitions
+typedef struct scalar_que_entry {
+  unsigned m_tid;
+  unsigned m_warp_id;
+  address_type start_pc;
+  address_type reconv_pc;
+} scalar_que_entry;
+
+typedef struct scalar_reg {
+  unsigned m_tid;
+  address_type start_pc;
+  address_type reconv_pc;
+  bool dirty;
+} scalar_reg;
+// end of V3 arch type definitions
 
 enum exec_unit_type_t {
   NONE = 0,
@@ -277,6 +298,25 @@ class shd_warp_t {
     return m_shader;
   }
 
+  // V3 arch functions
+  bool in_div_region();
+  unsigned count_active_threads(active_mask_t thread_mask);
+  void increment_sat_counters(active_mask_t result_thread_mask);
+  std::vector<unsigned> check_sat_counters();
+  void get_pcs(unsigned *rpc, unsigned *pc);
+  unsigned set_scalar_regs(std::vector<unsigned> scalar_tids); // Sets the threads to be scalarized in the scalar registers if there is space, returns number of registers scalarized
+  void cycle_through_scalar_regs(); // Simulates cycle by cycle controller that iterates over scalar registers and pushes to the scalar que
+  bool all_on_scalar(active_mask_t simt_mask) { return (~scalar_mask & simt_mask).none(); } //If simt mask & ~scalar mask is all 0s, that means all threads are on scalar core
+  bool all_on_simt(active_mask_t simt_mask) { return (scalar_mask & simt_mask).none(); } //If simt mask & scalar mask is all 0s, that means all threads are on simt core
+  bool at_least_one_on_scalar(active_mask_t simt_mask) { return (scalar_mask & simt_mask).any(); }
+  active_mask_t get_result_mask(active_mask_t simt_mask) { return ~scalar_mask & simt_mask; }
+  active_mask_t get_scalar_mask() { return scalar_mask; }
+  bool get_elected_status() { return elected; }
+  void set_elected_status(bool in) { elected = in; }
+  scalar_que_entry get_elected_thread() { return elected_thread; }
+  void set_elected_thread(scalar_que_entry entry) { elected_thread = entry; }
+  ~shd_warp_t() { fprintf(stdout, "Scalarized %d threads on warp %d\n",num_scalarizations,m_warp_id); }
+
  private:
   static const unsigned IBUFFER_SIZE = 2;
   class shader_core_ctx *m_shader;
@@ -316,6 +356,15 @@ class shd_warp_t {
   unsigned m_stores_outstanding;  // number of store requests sent but not yet
                                   // acknowledged
   unsigned m_inst_in_pipeline;
+
+  // V3 arch support
+  active_mask_t scalar_mask;
+  std::vector<unsigned> sat_counters;
+  std::vector<scalar_reg> scalar_regs;
+  unsigned reg_cntr;
+  unsigned num_scalarizations;
+  bool elected;
+  scalar_que_entry elected_thread;
 
   // Jin: cdp support
  public:
@@ -2125,6 +2174,14 @@ class shader_core_ctx : public core_t {
   void set_max_cta(const kernel_info_t &kernel);
   void warp_inst_complete(const warp_inst_t &inst);
 
+  // V3 Arch methods 
+  void display_scalar_que();
+  void rr_top_level_scheduler();
+  bool push_scalar_que(scalar_que_entry entry);
+  unsigned get_scalar_que_ocp() { return scalar_que.size(); }
+  bool is_scalar_que_empty() { return (bool)get_scalar_que_ocp(); }
+  scalar_que_entry pop_scalar_que();
+
   // accessors
   std::list<unsigned> get_regs_written(const inst_t &fvt) const;
   const shader_core_config *get_config() const { return m_config; }
@@ -2494,6 +2551,10 @@ class shader_core_ctx : public core_t {
 
   unsigned long long m_last_inst_gpu_sim_cycle;
   unsigned long long m_last_inst_gpu_tot_sim_cycle;
+
+  // V3 arch support
+  unsigned warp_cntr;
+  std::deque<scalar_que_entry> scalar_que;
 
   // general information
   unsigned m_sid;  // shader id
