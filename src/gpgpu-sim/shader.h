@@ -143,6 +143,14 @@ class shd_warp_t {
     m_next = 0;
     m_streamID = (unsigned long long)-1;
 
+    // V3 arch support
+    scalar_mask.reset();                          // clear all scalar bits
+    sat_counters.assign(m_warp_size, 0u);         // one counter per thread in the warp
+    scalar_regs.assign(SCALAR_BANDWIDTH, {0,0,0,false}); // allocate scalar register entries
+    reg_cntr = 0;
+    num_scalarizations = 0;
+    elected = false;
+
     // Jin: cdp support
     m_cdp_latency = 0;
     m_cdp_dummy = false;
@@ -171,6 +179,7 @@ class shd_warp_t {
     m_next_pc = start_pc;
     assert(n_completed >= active.count());
     assert(n_completed <= m_warp_size);
+    assert(sat_counters.size() == m_warp_size); // V3 arch check
     n_completed -= active.count();  // active threads are not yet completed
     m_active_threads = active;
     m_done_exit = false;

@@ -1037,17 +1037,17 @@ void shader_core_ctx::issue_warp(register_set &pipe_reg_set,
                                  const warp_inst_t *next_inst,
                                  const active_mask_t &active_mask,
                                  unsigned warp_id, unsigned sch_id) {
-  // V3 modifications
+  // V3 modification
   shd_warp_t * warp = m_warp[warp_id];                    
   active_mask_t result_mask = warp->get_result_mask(active_mask); // Get thread mask that will run on SIMT core by anding inverse scalar mask and simt stack thread mask
 
   unsigned num_active_threads = warp->count_active_threads(result_mask); // Count number of active threads 
 
-  if(num_active_threads <= SCALAR_BANDWIDTH){ // If less than or equal to scalar bandwidth increment their saturating counters
+  if(num_active_threads <= SCALAR_BANDWIDTH) { // If less than or equal to scalar bandwidth increment their saturating counters
     warp->increment_sat_counters(result_mask);
   }
 
-  std::vector<unsigned> scalarized_tids = warp->check_sat_counters(); // Check if any warp has hit the saturation limit
+  std::vector<unsigned> scalarized_tids = warp->check_sat_counters(); // Check if any warp has hit the saturation limit // THIS INSTRUCTION CAUSES SEG FAULT!!!!!
 
   warp->set_scalar_regs(scalarized_tids); // Fill any available registers in one cycle with the info that the scalar core would need
   warp->cycle_through_scalar_regs(); // Controller cycles through registers every cycle and pushes to scalar que

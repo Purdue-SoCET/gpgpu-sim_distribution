@@ -3,7 +3,7 @@ self exe links to: /home/asicfab/a/mathur63/senior_design_project/gpgpu-sim_dist
 11.0
 
 
-        *** GPGPU-Sim Simulator Version 4.2.0  [build gpgpu-sim_git-commit-f3b6a53_modified_7.0] ***
+        *** GPGPU-Sim Simulator Version 4.2.0  [build gpgpu-sim_git-commit-f3b6a53_modified_5.0] ***
 
 
 GPGPU-Sim PTX: simulation mode 0 (can change with PTX_SIM_MODE_FUNC environment variable:
@@ -239,7 +239,7 @@ GPGPU-Sim: Configuration options:
 DRAM Timing Options:
 nbk                                    16 # number of banks
 CCD                                     1 # column to column delay
-RRD                              d8b0ce26635a33d79cc26f48b6a58a08  /home/asicfab/a/mathur63/senior_design_project/gpgpu-sim_distribution_2/test/mmul/mmul
+RRD                              747bc838d3eec0636e23e2a986bf024d  /home/asicfab/a/mathur63/senior_design_project/gpgpu-sim_distribution_2/test/mmul/mmul
 Extracting PTX file and ptxas options    1: mmul.1.sm_52.ptx -arch=sm_52
        3 # minimal delay between activation of rows in different banks
 RCD                                    12 # row to column delay
@@ -279,10 +279,10 @@ GPGPU-Sim PTX: finished loading globals (0 bytes total).
 GPGPU-Sim PTX: loading constants with explicit initializers...  done.
 GPGPU-Sim PTX: Loading PTXInfo from mmul.1.sm_52.ptx
 GPGPU-Sim PTX: Kernel '_Z9matrixMulPKiS0_Pii' : regs=22, lmem=0, smem=0, cmem=348
-GPGPU-Sim PTX: Setting up arguments for 8 bytes starting at 0x7ffd9b9e5248..
-GPGPU-Sim PTX: Setting up arguments for 8 bytes starting at 0x7ffd9b9e5240..
-GPGPU-Sim PTX: Setting up arguments for 8 bytes starting at 0x7ffd9b9e5238..
-GPGPU-Sim PTX: Setting up arguments for 4 bytes starting at 0x7ffd9b9e5234..
+GPGPU-Sim PTX: Setting up arguments for 8 bytes starting at 0x7ffe077aecc8..
+GPGPU-Sim PTX: Setting up arguments for 8 bytes starting at 0x7ffe077aecc0..
+GPGPU-Sim PTX: Setting up arguments for 8 bytes starting at 0x7ffe077aecb8..
+GPGPU-Sim PTX: Setting up arguments for 4 bytes starting at 0x7ffe077aecb4..
 
 GPGPU-Sim PTX: cudaLaunch for 0x0x401462 (mode=performance simulation) on stream 0
 GPGPU-Sim PTX: finding reconvergence points for '_Z9matrixMulPKiS0_Pii'...

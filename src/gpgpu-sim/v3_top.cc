@@ -3,7 +3,7 @@
 
 // Function definitions for carrying out divergence detection and scalarization heuristic
 
-#include "../shader.h"
+#include "shader.h"
 
 bool shader_core_ctx::push_scalar_que(scalar_que_entry entry) {
   // scalar_que_entry entry;
@@ -49,7 +49,7 @@ bool shd_warp_t::in_div_region() {
 }
 
 unsigned shd_warp_t::count_active_threads(active_mask_t thread_mask) {
-  unsigned cnt;
+  unsigned cnt = 0;
   for(int i=0; i<m_warp_size; i++){
     if(thread_mask[i]){
       cnt++;
@@ -59,9 +59,9 @@ unsigned shd_warp_t::count_active_threads(active_mask_t thread_mask) {
 }
 
 void shd_warp_t::increment_sat_counters(active_mask_t result_thread_mask) {
-  for(int i=0; i<m_warp_size; i++){
+  for(int i=0; i<m_warp_size; i++) {
     if(result_thread_mask[i]){
-      if(sat_counters[i] < SAT_LIMIT){
+      if(sat_counters[i] < SAT_LIMIT) {
         sat_counters[i]++;
       }
     }
@@ -70,14 +70,14 @@ void shd_warp_t::increment_sat_counters(active_mask_t result_thread_mask) {
 
 std::vector<unsigned> shd_warp_t::check_sat_counters() {
   std::vector<unsigned> scalar_tids;
-  for(unsigned i=0; i<m_warp_size; i++){
-    if(sat_counters[i] == SAT_LIMIT && ~scalar_mask[i] && in_div_region()){
+  for(unsigned i=0; i<m_warp_size; i++) {
+    if(sat_counters[i] == SAT_LIMIT && !scalar_mask[i] && in_div_region()) {
+      fprintf(stdout,"Scalarized thread %d on warp %d\n",i,m_warp_id);  // TESTING
       scalar_tids.push_back(i);
     }
   }
   return scalar_tids;
 }
-
 
 unsigned shd_warp_t::set_scalar_regs(std::vector<unsigned> scalar_tids) {
   unsigned num_scalarized = 0;
