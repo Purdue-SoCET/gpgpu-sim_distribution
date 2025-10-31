@@ -1038,19 +1038,21 @@ void shader_core_ctx::issue_warp(register_set &pipe_reg_set,
                                  const active_mask_t &active_mask,
                                  unsigned warp_id, unsigned sch_id) {
   // V3 modification
-  shd_warp_t * warp = m_warp[warp_id];                    
-  active_mask_t result_mask = warp->get_result_mask(active_mask); // Get thread mask that will run on SIMT core by anding inverse scalar mask and simt stack thread mask
 
-  unsigned num_active_threads = warp->count_active_threads(result_mask); // Count number of active threads 
-
-  if(num_active_threads <= SCALAR_BANDWIDTH) { // If less than or equal to scalar bandwidth increment their saturating counters
+  // Get the active mask of the warp as well as number of threads running on warp
+  shd_warp_t * warp = m_warp[warp_id];
+  active_mask_t result_mask = warp->get_result_mask(active_mask); // Get the new active mask for the SIMT core by anding the inverse scalar mask and simt stack thread mask (on SIMT core but not on scalar core)
+  unsigned num_active_threads = warp->count_active_threads(result_mask); // Count number of active threads
+  
+  std::vector<unsigned> scalarized_tids; // Vector to hold thread IDs that need to be scalarized
+  // If number of active SIMT threads less than or equal to scalar bandwidth AND the warp is in a divergent region (checked inside function call), increment their saturating counters
+  if ((num_active_threads <= SCALAR_BANDWIDTH) && (num_active_threads != 0)) {
     warp->increment_sat_counters(result_mask);
+    scalarized_tids = warp->check_sat_counters(); // Check if any warp has hit the saturation limit -- if they have, mark their thread ID in scalarized_tids
   }
 
-  std::vector<unsigned> scalarized_tids = warp->check_sat_counters(); // Check if any warp has hit the saturation limit // THIS INSTRUCTION CAUSES SEG FAULT!!!!!
-
   warp->set_scalar_regs(scalarized_tids); // Fill any available registers in one cycle with the info that the scalar core would need
-  warp->cycle_through_scalar_regs(); // Controller cycles through registers every cycle and pushes to scalar que
+  warp->cycle_through_scalar_regs(); // Controller cycles through registers every cycle and pushes to scalar que || DOES NOT CYCLE THROUGH ALL REGISTERS, ONLY ONE!
   
   rr_top_level_scheduler();
   // End of V3
@@ -1370,7 +1372,7 @@ void scheduler_unit::cycle() {
                    previous_issued_inst_exec_type != exec_unit_type_t::MEM)) {
                 m_shader->issue_warp(*m_mem_out, pI, active_mask, warp_id,
                                      m_id);
-                fprintf(stdout, "warp_id=%d, core_id=%d, active_mask=%s\n", warp_id,core_id, active_mask.to_string().c_str());
+                fprintf(stdout, "pc=%x, warp_id=%d, core_id=%d, active_mask=%s\n", pc, warp_id, core_id, active_mask.to_string().c_str());
                 issued++;
                 issued_inst = true;
                 warp_inst_issued = true;
@@ -1436,7 +1438,7 @@ void scheduler_unit::cycle() {
                 if (execute_on_SP) {
                   m_shader->issue_warp(*m_sp_out, pI, active_mask, warp_id,
                                        m_id);
-                  fprintf(stdout, "warp_id=%d, core_id=%d, active_mask=%s\n", warp_id,core_id, active_mask.to_string().c_str());
+                  fprintf(stdout, "pc=%x, warp_id=%d, core_id=%d, active_mask=%s\n", pc, warp_id, core_id, active_mask.to_string().c_str());
                   issued++;
                   issued_inst = true;
                   warp_inst_issued = true;
@@ -1444,7 +1446,7 @@ void scheduler_unit::cycle() {
                 } else if (execute_on_INT) {
                   m_shader->issue_warp(*m_int_out, pI, active_mask, warp_id,
                                        m_id);
-                  fprintf(stdout, "warp_id=%d, core_id=%d, active_mask=%s\n", warp_id,core_id, active_mask.to_string().c_str());
+                  fprintf(stdout, "pc=%x, warp_id=%d, core_id=%d, active_mask=%s\n", pc, warp_id, core_id, active_mask.to_string().c_str());
                   issued++;
                   issued_inst = true;
                   warp_inst_issued = true;
@@ -1462,7 +1464,7 @@ void scheduler_unit::cycle() {
                 if (dp_pipe_avail) {
                   m_shader->issue_warp(*m_dp_out, pI, active_mask, warp_id,
                                        m_id);
-                  fprintf(stdout, "warp_id=%d, core_id=%d, active_mask=%s\n", warp_id,core_id, active_mask.to_string().c_str());
+                  fprintf(stdout, "pc=%x, warp_id=%d, core_id=%d, active_mask=%s\n", pc, warp_id, core_id, active_mask.to_string().c_str());
                   issued++;
                   issued_inst = true;
                   warp_inst_issued = true;
@@ -1483,7 +1485,7 @@ void scheduler_unit::cycle() {
                 if (sfu_pipe_avail) {
                   m_shader->issue_warp(*m_sfu_out, pI, active_mask, warp_id,
                                        m_id);
-                  fprintf(stdout, "warp_id=%d, core_id=%d, active_mask=%s\n", warp_id,core_id, active_mask.to_string().c_str());
+                  fprintf(stdout, "pc=%x, warp_id=%d, core_id=%d, active_mask=%s\n", pc, warp_id, core_id, active_mask.to_string().c_str());
                   issued++;
                   issued_inst = true;
                   warp_inst_issued = true;
@@ -1500,7 +1502,7 @@ void scheduler_unit::cycle() {
                 if (tensor_core_pipe_avail) {
                   m_shader->issue_warp(*m_tensor_core_out, pI, active_mask,
                                        warp_id, m_id);
-                  fprintf(stdout, "warp_id=%d, core_id=%d, active_mask=%s\n", warp_id,core_id, active_mask.to_string().c_str());
+                  fprintf(stdout, "pc=%x, warp_id=%d, core_id=%d, active_mask=%s\n", pc, warp_id, core_id, active_mask.to_string().c_str());
                   issued++;
                   issued_inst = true;
                   warp_inst_issued = true;
@@ -1522,7 +1524,7 @@ void scheduler_unit::cycle() {
                 if (spec_pipe_avail) {
                   m_shader->issue_warp(*spec_reg_set, pI, active_mask, warp_id,
                                        m_id);
-                  fprintf(stdout, "warp_id=%d, core_id=%d, active_mask=%s\n", warp_id,core_id, active_mask.to_string().c_str());
+                  fprintf(stdout, "pc=%x, warp_id=%d, core_id=%d, active_mask=%s\n", pc, warp_id, core_id, active_mask.to_string().c_str());
                   issued++;
                   issued_inst = true;
                   warp_inst_issued = true;

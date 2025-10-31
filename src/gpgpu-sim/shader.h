@@ -313,7 +313,7 @@ class shd_warp_t {
   void increment_sat_counters(active_mask_t result_thread_mask);
   std::vector<unsigned> check_sat_counters();
   void get_pcs(unsigned *rpc, unsigned *pc);
-  unsigned set_scalar_regs(std::vector<unsigned> scalar_tids); // Sets the threads to be scalarized in the scalar registers if there is space, returns number of registers scalarized
+  void set_scalar_regs(std::vector<unsigned> scalar_tids); // Sets the threads to be scalarized in the scalar registers if there is space, returns number of registers scalarized
   void cycle_through_scalar_regs(); // Simulates cycle by cycle controller that iterates over scalar registers and pushes to the scalar que
   bool all_on_scalar(active_mask_t simt_mask) { return (~scalar_mask & simt_mask).none(); } //If simt mask & ~scalar mask is all 0s, that means all threads are on scalar core
   bool all_on_simt(active_mask_t simt_mask) { return (scalar_mask & simt_mask).none(); } //If simt mask & scalar mask is all 0s, that means all threads are on simt core
