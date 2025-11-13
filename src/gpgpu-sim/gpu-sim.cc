@@ -662,6 +662,13 @@ void shader_core_config::reg_options(class OptionParser *opp) {
                            "OC_SPEC>:<OC_EX_SPEC>,<NAME>}",
                            "0,4,4,4,4,BRA");
   }
+
+  // v3 addition
+  option_parser_register(opp, "-gpgpu_scalar_core_enabled", OPT_BOOL,
+    &is_scalar_core_enabled,
+    "whether v3 architectural changes are active or not", "0");
+  // end of v3 addition
+
 }
 
 void gpgpu_sim_config::reg_options(option_parser_t opp) {
@@ -1802,7 +1809,7 @@ unsigned exec_shader_core_ctx::sim_init_thread(
                              num_threads, core, hw_cta_id, hw_warp_id, gpu);
 }
 
-void shader_core_ctx::issue_block2core(kernel_info_t &kernel) {
+void shader_core_ctx::issue_block2core(kernel_info_t &kernel, unsigned wid) {
   if (!m_config->gpgpu_concurrent_kernel_sm)
     set_max_cta(kernel);
   else
@@ -1824,10 +1831,18 @@ void shader_core_ctx::issue_block2core(kernel_info_t &kernel) {
       break;
     }
   }
+
+  if (m_config->is_scalar_core_enabled && m_core_type == SCALAR_CORE) {
+    free_cta_hw_id = wid; 
+  }
+
   assert(free_cta_hw_id != (unsigned)-1);
+  
+  kernel.set_core_type(m_core_type);
 
   // determine hardware threads and warps that will be used for this CTA
-  int cta_size = kernel.threads_per_cta();
+  // int cta_size = kernel.threads_per_cta();
+  int cta_size = (m_core_type == SCALAR_CORE) ? 1 : kernel.threads_per_cta();
 
   // hw warp id = hw thread id mod warp size, so we need to find a range
   // of hardware thread ids corresponding to an integral number of hardware
@@ -1839,16 +1854,22 @@ void shader_core_ctx::issue_block2core(kernel_info_t &kernel) {
 
   unsigned int start_thread, end_thread;
 
-  if (!m_config->gpgpu_concurrent_kernel_sm) {
-    start_thread = free_cta_hw_id * padded_cta_size;
-    end_thread = start_thread + cta_size;
+
+  if (m_config->is_scalar_core_enabled && m_core_type == SCALAR_CORE) {
+    start_thread = wid;
+    end_thread = wid + 1; 
   } else {
-    start_thread = find_available_hwtid(padded_cta_size, true);
-    assert((int)start_thread != -1);
-    end_thread = start_thread + cta_size;
-    assert(m_occupied_cta_to_hwtid.find(free_cta_hw_id) ==
-           m_occupied_cta_to_hwtid.end());
-    m_occupied_cta_to_hwtid[free_cta_hw_id] = start_thread;
+    if (!m_config->gpgpu_concurrent_kernel_sm) {
+      start_thread = free_cta_hw_id * padded_cta_size;
+      end_thread = start_thread + cta_size;
+    } else {
+      start_thread = find_available_hwtid(padded_cta_size, true);
+      assert((int)start_thread != -1);
+      end_thread = start_thread + cta_size;
+      assert(m_occupied_cta_to_hwtid.find(free_cta_hw_id) ==
+            m_occupied_cta_to_hwtid.end());
+      m_occupied_cta_to_hwtid[free_cta_hw_id] = start_thread;
+    }
   }
 
   // reset the microarchitecture state of the selected hardware thread and warp
@@ -1891,6 +1912,7 @@ void shader_core_ctx::issue_block2core(kernel_info_t &kernel) {
          nthreads_in_block <=
              m_config->n_thread_per_shader);  // should be at least one, but
                                               // less than max
+
   m_cta_status[free_cta_hw_id] = nthreads_in_block;
 
   if (m_gpu->resume_option == 1 && kernel.get_uid() == m_gpu->resume_kernel &&
@@ -1909,6 +1931,11 @@ void shader_core_ctx::issue_block2core(kernel_info_t &kernel) {
   m_n_active_cta++;
 
   shader_CTA_count_log(m_sid, 1);
+  printf("GPGPU-Sim Core %d uArch: cta:%2u, start_tid:%4u, end_tid:%4u, "
+                 "initialized @(%lld,%lld), kernel_uid:%u, kernel_name:%s\n", get_core_type(),
+                 free_cta_hw_id, start_thread, end_thread, m_gpu->gpu_sim_cycle,
+                 m_gpu->gpu_tot_sim_cycle, kernel.get_uid(),
+                 kernel.get_name().c_str());
   SHADER_DPRINTF(LIVENESS,
                  "GPGPU-Sim uArch: cta:%2u, start_tid:%4u, end_tid:%4u, "
                  "initialized @(%lld,%lld), kernel_uid:%u, kernel_name:%s\n",

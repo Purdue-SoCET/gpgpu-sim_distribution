@@ -50,6 +50,7 @@
 #include "stat-tool.h"
 #include "traffic_breakdown.h"
 #include "visualizer.h"
+#include "ttm.h"
 
 #define PRIORITIZE_MSHR_OVER_WB 1
 #define MAX(a, b) (((a) > (b)) ? (a) : (b))
@@ -91,12 +92,39 @@ std::list<unsigned> shader_core_ctx::get_regs_written(const inst_t &fvt) const {
   return result;
 }
 
+
+// [V3] Modifications
 void exec_shader_core_ctx::create_shd_warp() {
-  m_warp.resize(m_config->max_warps_per_shader);
-  for (unsigned k = 0; k < m_config->max_warps_per_shader; ++k) {
-    m_warp[k] = new shd_warp_t(this, m_config->warp_size);
+    m_warp.resize(m_config->max_warps_per_shader);
+
+    if (m_config->is_scalar_core_enabled) {
+    CoreType core_type = get_core_type();
+    printf("Creating warps for core type: %s\n", (core_type == SIMT_CORE) ? "SIMT_CORE" : "SCALAR_CORE");
+
+    for (unsigned k = 0; k < m_config->max_warps_per_shader; ++k) {
+
+        if (core_type == SIMT_CORE) {
+            // Use normal warp size
+            m_warp[k] = new shd_warp_t(this, m_config->warp_size);
+        } else {
+            // Scalar core: only the first thread active
+            m_warp[k] = new shd_warp_t(this, m_config->warp_size);
+        }
+
+        // Initialize the warp with the appropriate active mask
+        // m_warp[k]->init(0, 0, k, active_mask, k, 0);
+        printf("%s Core: Warp %u initialized\n",
+               (core_type == SIMT_CORE) ? "SIMT" : "Scalar",
+               k);
+    }
+  } else {
+    for (unsigned k = 0; k < m_config->max_warps_per_shader; ++k) {
+      m_warp[k] = new shd_warp_t(this, m_config->warp_size);
+    }
   }
 }
+
+// [V3] Modifications END
 
 void shader_core_ctx::create_front_pipeline() {
   // pipeline_stages is the sum of normal pipeline stages and specialized_unit
@@ -184,8 +212,9 @@ void shader_core_ctx::create_front_pipeline() {
                               IN_L1I_MISS_QUEUE, OTHER_GPU_CACHE, m_gpu);
 }
 
+// [V3] Modifications
 void shader_core_ctx::create_schedulers() {
-  m_scoreboard = new Scoreboard(m_sid, m_config->max_warps_per_shader, m_gpu);
+  m_scoreboard = new Scoreboard(m_sid, m_config->max_warps_per_shader, m_gpu, DEFAULT);
 
   // scedulers
   // must currently occur after all inputs have been initialized.
@@ -256,10 +285,19 @@ void shader_core_ctx::create_schedulers() {
       default:
         abort();
     };
-  }
 
+    // v3 addition
+    if (m_config->is_scalar_core_enabled) {
+      m_fetched_register_board = new Scoreboard(m_sid, m_config->max_warps_per_shader, m_gpu, FRB); // Fetched Register board is effectively another scoreboard
+      m_written_register_board = new Scoreboard(m_sid,  m_config->max_warps_per_shader, m_gpu, WRB); // Written Register board is effectively a bitmask, but using scoreboard for simplicity
+      reset_transfer_structures();
+    }
+    // end of v3 addition
+  }
+  // fprintf(stdout, "Number of Warps per shader core: %d\n", schedulers[0].m_next_cycle_prioritized_warps.size());
   for (unsigned i = 0; i < m_warp.size(); i++) {
     // distribute i's evenly though schedulers;
+    // fprintf(stdout, "Warp %d added to scheduler %d\n", i, i%m_config->gpgpu_num_sched_per_core);
     schedulers[i % m_config->gpgpu_num_sched_per_core]->add_supervised_warp_id(
         i);
   }
@@ -267,10 +305,11 @@ void shader_core_ctx::create_schedulers() {
     schedulers[i]->done_adding_supervised_warps();
   }
 }
+// [V3] Modifications END
 
 void shader_core_ctx::create_exec_pipeline() {
   // op collector configuration
-  enum { SP_CUS, DP_CUS, SFU_CUS, TENSOR_CORE_CUS, INT_CUS, MEM_CUS, GEN_CUS };
+  enum { SP_CUS, DP_CUS, SFU_CUS, TENSOR_CORE_CUS, INT_CUS, MEM_CUS, GEN_CUS, REROUTE_CUS  };
 
   opndcoll_rfu_t::port_vector_t in_ports;
   opndcoll_rfu_t::port_vector_t out_ports;
@@ -539,6 +578,9 @@ void shader_core_ctx::init_warps(unsigned cta_id, unsigned start_thread,
     unsigned warp_per_cta = cta_size / m_config->warp_size;
     unsigned end_warp = end_thread / m_config->warp_size +
                         ((end_thread % m_config->warp_size) ? 1 : 0);
+                        
+    fprintf(stdout, "Start warp %d and end warp %d\n", start_warp, end_warp-1); // [V3] Modifications 
+
     for (unsigned i = start_warp; i < end_warp; ++i) {
       unsigned n_active = 0;
       simt_mask_t active_threads;
@@ -886,11 +928,13 @@ const active_mask_t &exec_shader_core_ctx::get_active_mask(
   return m_simt_stack[warp_id]->get_active_mask();
 }
 
+
 void shader_core_ctx::decode() {
   if (m_inst_fetch_buffer.m_valid) {
     // decode 1 or 2 instructions and place them into ibuffer
     address_type pc = m_inst_fetch_buffer.m_pc;
     const warp_inst_t *pI1 = get_next_inst(m_inst_fetch_buffer.m_warp_id, pc);
+
     m_warp[m_inst_fetch_buffer.m_warp_id]->ibuffer_fill(0, pI1);
     m_warp[m_inst_fetch_buffer.m_warp_id]->inc_inst_in_pipeline();
     if (pI1) {
@@ -918,23 +962,38 @@ void shader_core_ctx::decode() {
       }
     }
     m_inst_fetch_buffer.m_valid = false;
+    }
+  }
+
+// [V3] Modifications
+void shader_core_ctx::squash_fetch(unsigned warp_id) {
+  // Need to squash if we made memory request but end up not needing the instr bc warp reached rpc
+  if (m_warp[warp_id]->functional_done()) {
+    printf("Warp %d tried to fetch but it is functionally done so squashing fetch\n", warp_id); 
+    m_inst_fetch_buffer.m_valid = false; 
   }
 }
 
-void shader_core_ctx::fetch() {
+void shader_core_ctx::fetch(int iter) {
   if (!m_inst_fetch_buffer.m_valid) {
     if (m_L1I->access_ready()) {
       mem_fetch *mf = m_L1I->next_access();
       m_warp[mf->get_wid()]->clear_imiss_pending();
+
       m_inst_fetch_buffer =
           ifetch_buffer_t(m_warp[mf->get_wid()]->get_pc(),
                           mf->get_access_size(), mf->get_wid());
       assert(m_warp[mf->get_wid()]->get_pc() ==
-             (mf->get_addr() -
+            (mf->get_addr() -
               PROGRAM_MEM_START));  // Verify that we got the instruction we
                                     // were expecting.
       m_inst_fetch_buffer.m_valid = true;
       m_warp[mf->get_wid()]->set_last_fetch(m_gpu->gpu_sim_cycle);
+
+      if (m_config->is_scalar_core_enabled && get_core_type() == SCALAR_CORE) {
+        squash_fetch(mf->get_wid()); 
+      }
+
       delete mf;
     } else {
       // find an active warp with space in instruction buffer that is not
@@ -946,36 +1005,65 @@ void shader_core_ctx::fetch() {
 
         // this code checks if this warp has finished executing and can be
         // reclaimed
-        if (m_warp[warp_id]->hardware_done() &&
+
+        if ((m_warp[warp_id]->hardware_done() &&
             !m_scoreboard->pendingWrites(warp_id) &&
-            !m_warp[warp_id]->done_exit()) {
-          bool did_exit = false;
-          for (unsigned t = 0; t < m_config->warp_size; t++) {
-            unsigned tid = warp_id * m_config->warp_size + t;
-            if (m_threadState[tid].m_active == true) {
-              m_threadState[tid].m_active = false;
-              unsigned cta_id = m_warp[warp_id]->get_cta_id();
-              if (m_thread[tid] == NULL) {
-                register_cta_thread_exit(cta_id,
-                                         m_warp[warp_id]->get_kernel_info());
-              } else {
-                register_cta_thread_exit(cta_id,
-                                         &(m_thread[tid]->get_kernel()));
-              }
-              m_not_completed -= 1;
-              m_active_threads.reset(tid);
-              did_exit = true;
+            !m_warp[warp_id]->done_exit())) {
+
+          // Once hardware is done and all pending writes are cleared, start reconvergence
+          bool skip = false; 
+          if (m_config->is_scalar_core_enabled && get_core_type() == SCALAR_CORE) {
+            skip = true; 
+
+            // Warp is done reconverging and can be descheduled
+            if (reconverge_start.test(warp_id) && reconverge_done.test(warp_id)) {
+              printf("Core %u, warp %u is done reconverging\n", get_core_type(), warp_id); 
+              skip = false; 
             }
           }
-          if (did_exit) m_warp[warp_id]->set_done_exit();
-          --m_active_warps;
-          assert(m_active_warps >= 0);
+
+
+          if (!skip) {          
+            bool did_exit = false;
+            for (unsigned t = 0; t < m_config->warp_size; t++) {
+              unsigned tid = warp_id * m_config->warp_size + t;
+              if (m_threadState[tid].m_active == true) {
+                m_threadState[tid].m_active = false;
+                unsigned cta_id = m_warp[warp_id]->get_cta_id();
+                if (m_thread[tid] == NULL) {
+                  register_cta_thread_exit(cta_id,
+                                          m_warp[warp_id]->get_kernel_info());
+                } else {
+                  register_cta_thread_exit(cta_id,
+                                          &(m_thread[tid]->get_kernel()));
+                }
+
+                m_not_completed -= 1;
+                m_active_threads.reset(tid);
+                did_exit = true;
+              }
+            }
+            if (did_exit) m_warp[warp_id]->set_done_exit();
+            --m_active_warps;
+            assert(m_active_warps >= 0);
+
+            if (m_config->is_scalar_core_enabled && m_core_type == SCALAR_CORE) {
+              rdy_table->set_entry(warp_id, div_tid_table->get_entry(warp_id).simt_tid); // Fast lookup bc indexing based on scalar wid
+              div_tid_table->reset_entry(warp_id); // Technically can just invalidate
+              reconverge_start.reset(warp_id);
+              reconverge_done.reset(warp_id);
+              curr_state[warp_id] = IDLE; 
+              next_state[warp_id] = IDLE; 
+              printf("Core %u reclaimied warp %u\n", get_core_type(), warp_id); 
+            }
+          }
         }
 
         // this code fetches instructions from the i-cache or generates memory
         if (!m_warp[warp_id]->functional_done() &&
             !m_warp[warp_id]->imiss_pending() &&
             m_warp[warp_id]->ibuffer_empty()) {
+
           address_type pc;
           pc = m_warp[warp_id]->get_pc();
           address_type ppc = pc + PROGRAM_MEM_START;
@@ -989,9 +1077,9 @@ void shader_core_ctx::fetch() {
           // mem_fetch *mf = m_mem_fetch_allocator->alloc()
           mem_access_t acc(INST_ACC_R, ppc, nbytes, false, m_gpu->gpgpu_ctx);
           mem_fetch *mf = new mem_fetch(
-              acc, NULL, m_warp[warp_id]->get_kernel_info()->get_streamID(),
-              READ_PACKET_SIZE, warp_id, m_sid, m_tpc, m_memory_config,
-              m_gpu->gpu_tot_sim_cycle + m_gpu->gpu_sim_cycle);
+                acc, NULL, m_warp[warp_id]->get_kernel_info()->get_streamID(),
+                READ_PACKET_SIZE, warp_id, m_sid, m_tpc, m_memory_config,
+                m_gpu->gpu_tot_sim_cycle + m_gpu->gpu_sim_cycle);
           std::list<cache_event> events;
           enum cache_request_status status;
           if (m_config->perfect_inst_const_cache) {
@@ -1010,10 +1098,20 @@ void shader_core_ctx::fetch() {
             m_last_warp_fetched = warp_id;
             m_inst_fetch_buffer = ifetch_buffer_t(pc, nbytes, warp_id);
             m_warp[warp_id]->set_last_fetch(m_gpu->gpu_sim_cycle);
+
+            if (m_config->is_scalar_core_enabled && get_core_type() == SCALAR_CORE) {
+              squash_fetch(mf->get_wid()); 
+            }
+
             delete mf;
           } else {
             m_last_warp_fetched = warp_id;
             assert(status == RESERVATION_FAIL);
+
+            if (m_config->is_scalar_core_enabled && get_core_type() == SCALAR_CORE) {
+              squash_fetch(mf->get_wid()); 
+            }
+
             delete mf;
           }
           break;
@@ -1021,9 +1119,11 @@ void shader_core_ctx::fetch() {
       }
     }
   }
-
+ 
   m_L1I->cycle();
 }
+// [V3] Modifications END
+
 
 void exec_shader_core_ctx::func_exec_inst(warp_inst_t &inst) {
   execute_warp_inst_t(inst);
@@ -1037,39 +1137,63 @@ void shader_core_ctx::issue_warp(register_set &pipe_reg_set,
                                  const warp_inst_t *next_inst,
                                  const active_mask_t &active_mask,
                                  unsigned warp_id, unsigned sch_id) {
-  // V3 modification
 
-  // Get the active mask of the warp as well as number of threads running on warp
-  shd_warp_t * warp = m_warp[warp_id];
-  active_mask_t result_mask = warp->get_result_mask(active_mask); // Get the new active mask for the SIMT core by anding the inverse scalar mask and simt stack thread mask (on SIMT core but not on scalar core)
-  unsigned num_active_threads = warp->count_active_threads(result_mask); // Count number of active threads
-  
-  std::vector<unsigned> scalarized_tids; // Vector to hold thread IDs that need to be scalarized
-  // If number of active SIMT threads less than or equal to scalar bandwidth AND the warp is in a divergent region (checked inside function call), increment their saturating counters
-  if ((num_active_threads <= SCALAR_BANDWIDTH) && (num_active_threads != 0)) {
-    warp->increment_sat_counters(result_mask);
-    scalarized_tids = warp->check_sat_counters(); // Check if any warp has hit the saturation limit -- if they have, mark their thread ID in scalarized_tids
-  }
+  // [V3] Modifications
+  if (m_config->is_scalar_core_enabled && (get_core_type() == SIMT_CORE)) {
+    shd_warp_t * warp = m_warp[warp_id];    
+    active_mask_t result_mask = warp->get_result_mask(active_mask); // Get thread mask that will run on SIMT core by anding inverse scalar mask and simt stack thread mask
+
+    unsigned num_active_threads = warp->count_active_threads(result_mask); // Count number of active threads 
+
+    if(num_active_threads <= SCALAR_BANDWIDTH){ // If less than or equal to scalar bandwidth increment their saturating counters
+      warp->increment_sat_counters(result_mask);
+    }
+
+    std::vector<unsigned> scalarized_tids = warp->check_sat_counters(); // Check if any warp has hit the saturation limit
 
   warp->set_scalar_regs(scalarized_tids); // Fill any available registers in one cycle with the info that the scalar core would need
-  warp->cycle_through_scalar_regs(); // Controller cycles through registers every cycle and pushes to scalar que || DOES NOT CYCLE THROUGH ALL REGISTERS, ONLY ONE!
-  
+  warp->cycle_through_scalar_regs(); // Controller cycles through registers every cycle and pushes to scalar que
   rr_top_level_scheduler();
-  // End of V3
+  }
 
-  warp_inst_t **pipe_reg =
-      pipe_reg_set.get_free(m_config->sub_core_model, sch_id);
+  if (m_config->is_scalar_core_enabled && get_core_type() == SCALAR_CORE) {
+
+    // Modified instr has src registers become dest registers so checkCollision will flag properly
+    warp_inst_t frb_entry = *next_inst; 
+    for (unsigned i = 0; i < next_inst->incount; i++) {
+        // frb_entry.arch_reg.dst[i] = next_inst->arch_reg.src[i];
+        frb_entry.out[i] = next_inst->in[i]; 
+    }
+
+    if (m_fetched_register_board->checkCollision(warp_id, &frb_entry)) { // Check if src reg (moved to dst reg) is in fetched register board
+        frb_entry.print_insn(stdout); 
+        printf("The dst reg of this instruction is in FRB so we will steal, then don't have to steal again\n"); 
+        // Set steal signal, add to FRB
+        steal = true;
+        // passed instr = next_inst        
+        m_fetched_register_board->reserveRegisters(&frb_entry);
+        return;  
+    } 
+  }
+  // [V3] Modifications END
+
+  
+  warp_inst_t **pipe_reg = pipe_reg_set.get_free(m_config->sub_core_model, sch_id);
   assert(pipe_reg);
 
   m_warp[warp_id]->ibuffer_free();
   assert(next_inst->valid());
-  **pipe_reg = *next_inst;  // static instruction information
-  (*pipe_reg)->issue(
-      active_mask, warp_id, m_gpu->gpu_tot_sim_cycle + m_gpu->gpu_sim_cycle,
-      m_warp[warp_id]->get_dynamic_warp_id(), sch_id,
-      m_warp[warp_id]->get_streamID());  // dynamic instruction information
-  m_stats->shader_cycle_distro[2 + (*pipe_reg)->active_count()]++;
-  func_exec_inst(**pipe_reg);
+    **pipe_reg = *next_inst;  // static instruction information
+    (*pipe_reg)->issue(
+        active_mask, warp_id, m_gpu->gpu_tot_sim_cycle + m_gpu->gpu_sim_cycle,
+        m_warp[warp_id]->get_dynamic_warp_id(), sch_id,
+        m_warp[warp_id]->get_streamID());  // dynamic instruction information
+    m_stats->shader_cycle_distro[2 + (*pipe_reg)->active_count()]++;
+    func_exec_inst(**pipe_reg);
+  // } else {
+  //   (*pipe_reg)->pc = pc; 
+  //   next_pc = pc; 
+  // }
 
   // Add LDGSTS instructions into a buffer
   unsigned int ldgdepbar_id = m_warp[warp_id]->m_ldgdepbar_id;
@@ -1139,10 +1263,10 @@ void shader_core_ctx::issue_warp(register_set &pipe_reg_set,
     }
   }
 
-  updateSIMTStack(warp_id, *pipe_reg);
+    m_scoreboard->reserveRegisters(*pipe_reg);
 
-  m_scoreboard->reserveRegisters(*pipe_reg);
-  m_warp[warp_id]->set_next_pc(next_inst->pc + next_inst->isize);
+  updateSIMTStack(warp_id, *pipe_reg);
+  m_warp[warp_id]->set_next_pc(next_inst->pc + next_inst->isize); // Assuming isize doesn't really change
 }
 
 void shader_core_ctx::issue() {
@@ -1307,6 +1431,42 @@ void scheduler_unit::cycle() {
                                                  // dual issue to diff execution
                                                  // units (as in Maxwell and
                                                  // Pascal)
+    
+    // v3 addition
+    if (this->m_shader->get_config()->is_scalar_core_enabled && this->m_shader->get_core_type() == SCALAR_CORE) {
+        // fprintf(stdout, "Scalar Stack:\n"); 
+        // this->m_shader->m_simt_stack[warp_id]->print(stdout); 
+        
+        unsigned warp_id = (*iter)->get_warp_id(); 
+        if (this->m_shader->m_warp[warp_id]->get_pc() == this->m_shader->div_tid_table->get_entry(warp_id).simt_rpc && !this->m_shader->m_warp[warp_id]->functional_done()) {
+          printf("Try to stop warp %u since it is at pc=0x%x\n",warp_id, this->m_shader->m_warp[warp_id]->get_pc()); 
+          fflush(stdout); 
+          this->m_shader->m_warp[warp_id]->set_completed(0); // Warp is functionally finished
+          this->m_shader->m_thread[warp_id]->set_done(); // Thread is finished
+          this->m_shader->m_thread[warp_id]->m_cta_info->register_thread_exit(this->m_shader->m_thread[warp_id]); // Make the thread exit
+          this->m_shader->m_warp[warp_id]->ibuffer_flush(); 
+          this->m_shader->warp_exit(warp_id);
+          this->m_shader->m_inst_fetch_buffer.m_valid = false; // No more instruction fetching 
+          this->m_shader->reconverge_start.set(warp_id); 
+
+          // this->m_shader->dec_inst_in_pipeline(); // Need to decrement since doesn' make it to writeback 
+          // continue; // Don't issue the warp
+        }
+    }
+
+
+    if (this->m_shader->get_config()->is_scalar_core_enabled && this->m_shader->get_core_type() == SIMT_CORE) {
+      // SIMT core checks ready table to see if it can return to normal
+      if (this->m_shader->rdy_table->get_entry(warp_id).ready) {
+        unsigned tid = this->m_shader->rdy_table->get_entry(warp_id).tid;
+        this->m_shader->rdy_table->reset_entry(warp_id);
+        // Khoi's code goes here
+        
+      }
+
+      // fprintf(stdout, "SIMT Stack:\n"); 
+      // this->m_shader->m_simt_stack[warp_id]->print(stdout); 
+    }
 
     if (warp(warp_id).ibuffer_empty())
       SCHED_DPRINTF(
@@ -1331,6 +1491,7 @@ void scheduler_unit::cycle() {
       }
 
       bool valid = warp(warp_id).ibuffer_next_valid();
+      std::unordered_set<address_type> conv_points = warp(warp_id).get_conv_points();
       bool warp_inst_issued = false;
       unsigned pc, rpc;
       m_shader->get_pdom_stack_top_info(warp_id, pI, &pc, &rpc);
@@ -1339,6 +1500,7 @@ void scheduler_unit::cycle() {
           (*iter)->get_warp_id(), (*iter)->get_dynamic_warp_id(),
           m_shader->m_config->gpgpu_ctx->func_sim->ptx_get_insn_str(pc)
               .c_str());
+
       if (pI) {
         assert(valid);
         if (pc != pI->pc) {
@@ -1361,18 +1523,26 @@ void scheduler_unit::cycle() {
                 m_shader->get_active_mask(warp_id, pI);
 
             assert(warp(warp_id).inst_in_pipeline());
+            
+            bool reached_conv = false;
+            if (conv_points.find(pc) != conv_points.end()) reached_conv = true;
 
-            if ((pI->op == LOAD_OP) || (pI->op == STORE_OP) ||
+            bool onScalar = warp(warp_id).check_at_least_one_on_scalar(m_shader);
+            fprintf(stdout, "onScalar = %d ", onScalar);
+            fprintf(stdout, "reached_con = %d\n", reached_conv);
+            //Checking if the thread has reach convergence, is there any thread on scalar 
+            if (!(reached_conv && onScalar) && 
+                ((pI->op == LOAD_OP) || (pI->op == STORE_OP) ||
                 (pI->op == MEMORY_BARRIER_OP) ||
                 (pI->op == TENSOR_CORE_LOAD_OP) ||
-                (pI->op == TENSOR_CORE_STORE_OP)) {
+                (pI->op == TENSOR_CORE_STORE_OP))) {
               if (m_mem_out->has_free(m_shader->m_config->sub_core_model,
                                       m_id) &&
                   (!diff_exec_units ||
                    previous_issued_inst_exec_type != exec_unit_type_t::MEM)) {
                 m_shader->issue_warp(*m_mem_out, pI, active_mask, warp_id,
                                      m_id);
-                fprintf(stdout, "pc=%x, warp_id=%d, core_id=%d, active_mask=%s\n", pc, warp_id, core_id, active_mask.to_string().c_str());
+                fprintf(stdout, "warp_id=%d, core_id=%d, active_mask=%s\n", warp_id,core_id, active_mask.to_string().c_str());
                 issued++;
                 issued_inst = true;
                 warp_inst_issued = true;
@@ -1438,7 +1608,7 @@ void scheduler_unit::cycle() {
                 if (execute_on_SP) {
                   m_shader->issue_warp(*m_sp_out, pI, active_mask, warp_id,
                                        m_id);
-                  fprintf(stdout, "pc=%x, warp_id=%d, core_id=%d, active_mask=%s\n", pc, warp_id, core_id, active_mask.to_string().c_str());
+                  // fprintf(stdout, "warp_id=%d, core_id=%d, active_mask=%s\n", warp_id,core_id, active_mask.to_string().c_str());
                   issued++;
                   issued_inst = true;
                   warp_inst_issued = true;
@@ -1446,7 +1616,7 @@ void scheduler_unit::cycle() {
                 } else if (execute_on_INT) {
                   m_shader->issue_warp(*m_int_out, pI, active_mask, warp_id,
                                        m_id);
-                  fprintf(stdout, "pc=%x, warp_id=%d, core_id=%d, active_mask=%s\n", pc, warp_id, core_id, active_mask.to_string().c_str());
+                  // fprintf(stdout, "warp_id=%d, core_id=%d, active_mask=%s\n", warp_id,core_id, active_mask.to_string().c_str());
                   issued++;
                   issued_inst = true;
                   warp_inst_issued = true;
@@ -1464,7 +1634,7 @@ void scheduler_unit::cycle() {
                 if (dp_pipe_avail) {
                   m_shader->issue_warp(*m_dp_out, pI, active_mask, warp_id,
                                        m_id);
-                  fprintf(stdout, "pc=%x, warp_id=%d, core_id=%d, active_mask=%s\n", pc, warp_id, core_id, active_mask.to_string().c_str());
+                  // fprintf(stdout, "warp_id=%d, core_id=%d, active_mask=%s\n", warp_id,core_id, active_mask.to_string().c_str());
                   issued++;
                   issued_inst = true;
                   warp_inst_issued = true;
@@ -1485,7 +1655,7 @@ void scheduler_unit::cycle() {
                 if (sfu_pipe_avail) {
                   m_shader->issue_warp(*m_sfu_out, pI, active_mask, warp_id,
                                        m_id);
-                  fprintf(stdout, "pc=%x, warp_id=%d, core_id=%d, active_mask=%s\n", pc, warp_id, core_id, active_mask.to_string().c_str());
+                  // fprintf(stdout, "warp_id=%d, core_id=%d, active_mask=%s\n", warp_id,core_id, active_mask.to_string().c_str());
                   issued++;
                   issued_inst = true;
                   warp_inst_issued = true;
@@ -1502,7 +1672,7 @@ void scheduler_unit::cycle() {
                 if (tensor_core_pipe_avail) {
                   m_shader->issue_warp(*m_tensor_core_out, pI, active_mask,
                                        warp_id, m_id);
-                  fprintf(stdout, "pc=%x, warp_id=%d, core_id=%d, active_mask=%s\n", pc, warp_id, core_id, active_mask.to_string().c_str());
+                  // fprintf(stdout, "warp_id=%d, core_id=%d, active_mask=%s\n", warp_id,core_id, active_mask.to_string().c_str());
                   issued++;
                   issued_inst = true;
                   warp_inst_issued = true;
@@ -1524,7 +1694,7 @@ void scheduler_unit::cycle() {
                 if (spec_pipe_avail) {
                   m_shader->issue_warp(*spec_reg_set, pI, active_mask, warp_id,
                                        m_id);
-                  fprintf(stdout, "pc=%x, warp_id=%d, core_id=%d, active_mask=%s\n", pc, warp_id, core_id, active_mask.to_string().c_str());
+                  // fprintf(stdout, "warp_id=%d, core_id=%d, active_mask=%s\n", warp_id,core_id, active_mask.to_string().c_str());
                   issued++;
                   issued_inst = true;
                   warp_inst_issued = true;
@@ -1655,74 +1825,37 @@ void two_level_active_scheduler::do_on_warp_issued(
   }
 }
 
+// [V3] Modifications
 void two_level_active_scheduler::order_warps() {
-  // Move waiting warps to m_pending_warps
-  unsigned num_demoted = 0;
-  for (std::vector<shd_warp_t *>::iterator iter =
-           m_next_cycle_prioritized_warps.begin();
-       iter != m_next_cycle_prioritized_warps.end();) {
-    bool waiting = (*iter)->waiting();
-    for (int i = 0; i < MAX_INPUT_VALUES; i++) {
-      const warp_inst_t *inst = (*iter)->ibuffer_next_inst();
-      // Is the instruction waiting on a long operation?
-      if (inst && inst->in[i] > 0 &&
-          this->m_scoreboard->islongop((*iter)->get_warp_id(), inst->in[i])) {
-        waiting = true;
-      }
+    m_next_cycle_prioritized_warps.clear();
+
+    // Move waiting warps to pending list
+    for (auto it = m_next_cycle_prioritized_warps.begin(); it != m_next_cycle_prioritized_warps.end();) {
+        shd_warp_t *warp = *it;
+        bool waiting = warp->waiting();
+
+        for (int i = 0; i < MAX_INPUT_VALUES; i++) {
+            const warp_inst_t *inst = warp->ibuffer_next_inst();
+            if (inst && inst->in[i] > 0 && this->m_scoreboard->islongop(warp->get_warp_id(), inst->in[i])) {
+                waiting = true;
+            }
+        }
+
+        if (waiting) {
+            m_pending_warps.push_back(warp);
+            it = m_next_cycle_prioritized_warps.erase(it);
+        } else {
+            ++it;
+        }
     }
 
-    if (waiting) {
-      m_pending_warps.push_back(*iter);
-      iter = m_next_cycle_prioritized_warps.erase(iter);
-      SCHED_DPRINTF("DEMOTED warp_id=%d, dynamic_warp_id=%d\n",
-                    (*iter)->get_warp_id(), (*iter)->get_dynamic_warp_id());
-      ++num_demoted;
-    } else {
-      ++iter;
+    // Promote pending warps if space is available
+    while (m_next_cycle_prioritized_warps.size() < m_max_active_warps && !m_pending_warps.empty()) {
+        m_next_cycle_prioritized_warps.push_back(m_pending_warps.front());
+        m_pending_warps.pop_front();
     }
-  }
-
-  // If there is space in m_next_cycle_prioritized_warps, promote the next
-  // m_pending_warps
-  unsigned num_promoted = 0;
-  if (SCHEDULER_PRIORITIZATION_SRR == m_outer_level_prioritization) {
-    while (m_next_cycle_prioritized_warps.size() < m_max_active_warps) {
-      m_next_cycle_prioritized_warps.push_back(m_pending_warps.front());
-      m_pending_warps.pop_front();
-      SCHED_DPRINTF(
-          "PROMOTED warp_id=%d, dynamic_warp_id=%d\n",
-          (m_next_cycle_prioritized_warps.back())->get_warp_id(),
-          (m_next_cycle_prioritized_warps.back())->get_dynamic_warp_id());
-      ++num_promoted;
-    }
-  } else {
-    fprintf(stderr, "Unimplemented m_outer_level_prioritization: %d\n",
-            m_outer_level_prioritization);
-    abort();
-  }
-  assert(num_promoted == num_demoted);
 }
-
-swl_scheduler::swl_scheduler(shader_core_stats *stats, shader_core_ctx *shader,
-                             Scoreboard *scoreboard, simt_stack **simt,
-                             std::vector<shd_warp_t *> *warp,
-                             register_set *sp_out, register_set *dp_out,
-                             register_set *sfu_out, register_set *int_out,
-                             register_set *tensor_core_out,
-                             std::vector<register_set *> &spec_cores_out,
-                             register_set *mem_out, int id, char *config_string)
-    : scheduler_unit(stats, shader, scoreboard, simt, warp, sp_out, dp_out,
-                     sfu_out, int_out, tensor_core_out, spec_cores_out, mem_out,
-                     id) {
-  unsigned m_prioritization_readin;
-  int ret = sscanf(config_string, "warp_limiting:%d:%d",
-                   &m_prioritization_readin, &m_num_warps_to_limit);
-  assert(2 == ret);
-  m_prioritization = (scheduler_prioritization_type)m_prioritization_readin;
-  // Currently only GTO is implemented
-  assert(m_prioritization == SCHEDULER_PRIORITIZATION_GTO);
-  assert(m_num_warps_to_limit <= shader->get_config()->max_warps_per_shader);
-}
+// [V3] Modifications END
 
 void swl_scheduler::order_warps() {
   if (SCHEDULER_PRIORITIZATION_GTO == m_prioritization) {
@@ -1736,6 +1869,8 @@ void swl_scheduler::order_warps() {
     abort();
   }
 }
+
+
 
 void shader_core_ctx::read_operands() {
   for (unsigned int i = 0; i < m_config->reg_file_port_throughput; ++i)
@@ -1991,6 +2126,15 @@ void shader_core_ctx::writeback() {
     unsigned warp_id = pipe_reg->warp_id();
     m_scoreboard->releaseRegisters(pipe_reg);
     m_warp[warp_id]->dec_inst_in_pipeline();
+
+    // V3 changes
+    // Mark the register as modified in the written register board
+    if (m_config->is_scalar_core_enabled && get_core_type() == SCALAR_CORE) {
+      m_written_register_board->reserveRegisters(pipe_reg); 
+      // might need to move dst reg to src reg when reconverging
+    }
+    // end of V3 changes
+
     warp_inst_complete(*pipe_reg);
     m_gpu->gpu_sim_insn_last_update_sid = m_sid;
     m_gpu->gpu_sim_insn_last_update = m_gpu->gpu_sim_cycle;
@@ -2001,6 +2145,7 @@ void shader_core_ctx::writeback() {
     pipe_reg = (preg == NULL) ? NULL : *preg;
   }
 }
+
 
 bool ldst_unit::shared_cycle(warp_inst_t &inst, mem_stage_stall_type &rc_fail,
                              mem_stage_access_type &fail_type) {
@@ -2570,6 +2715,8 @@ pipelined_simd_unit::pipelined_simd_unit(register_set *result_port,
 }
 
 void pipelined_simd_unit::cycle() {
+  fprintf(stdout,"pipelined_simd_unit::cycle()\n");
+
   if (!m_pipeline_reg[0]->empty()) {
     m_result_port->move_in(m_pipeline_reg[0]);
     assert(active_insts_in_pipeline > 0);
@@ -2860,6 +3007,8 @@ inst->space.get_type() != shared_space) { unsigned warp_id = inst->warp_id();
 }
 */
 void ldst_unit::cycle() {
+  fprintf(stdout,"ldst::cycle()\n");
+
   writeback();
 
   for (unsigned stage = 0; (stage + 1) < m_pipeline_depth; stage++)
@@ -3689,22 +3838,57 @@ void shader_core_config::set_pipeline_latency() {
   max_tensor_core_latency = tensor_latency;
 }
 
+// [V3] Modifications 
 void shader_core_ctx::cycle() {
-  if (!isactive() && get_not_completed() == 0) return;
+  // Scalar coure will start up warps if entries are on scalar_que (1 per cycle) 
+  if (m_config->is_scalar_core_enabled && get_core_type() == SCALAR_CORE) {
+    // if (scalar_que->front().m_tid == 4) { // For now only pop 1 entry
+    if (!scalar_que->empty()) {
+      int free_entry_id = div_tid_table->find_free_entry(); // Make sure scalar core has space to assign first
+      if (free_entry_id != -1) {
+        scalar_que_entry entry = pop_scalar_que(); 
+        div_tid_table->set_entry(free_entry_id, entry.m_tid, entry.m_warp_id, entry.reconv_pc); 
+
+        kernel_info_t *simt_kernel = m_cluster->get_core()[get_sid() - m_config->n_simt_clusters]->get_kernel(); // Use the same kernel simt core
+
+        function_info *f = new function_info(*(simt_kernel->entry())); // Copy the kernel/code, but change the PC
+        f->set_start_PC((addr_t) entry.start_pc); 
+        dim3 t1(1, 1, 1); // Since borrowing kernel code to execute, change it to be for 1 thread
+        dim3 t2(1, 1, 1); 
+
+        printf("Popped tid=%u, wid=%u from scalar que and assigning to warp %u\n", entry.m_tid, entry.m_warp_id, free_entry_id); 
+
+        kernel_info_t *k = new kernel_info_t(t1, t2, f, simt_kernel->get_streamID());
+        if (k) set_kernel(k);
+
+        issue_block2core(*k, free_entry_id); //Launch the code
+      }
+    }
+  }
+
+  if (!isactive() && get_not_completed() == 0) {
+    return;
+  }
 
   m_stats->shader_cycles[m_sid]++;
+
   writeback();
   execute();
   read_operands();
   issue();
+
+  if (m_config->is_scalar_core_enabled && get_core_type() == SCALAR_CORE) {
+    return_fsm_cycle(); 
+  }
+
   for (unsigned int i = 0; i < m_config->inst_fetch_throughput; ++i) {
     decode();
-    fetch();
+    fetch(i);
   }
 }
+// [V3] Modifications END 
 
 // Flushes all content of the cache to memory
-
 void shader_core_ctx::cache_flush() { m_ldst_unit->flush(); }
 
 void shader_core_ctx::cache_invalidate() { m_ldst_unit->invalidate(); }
@@ -4321,9 +4505,10 @@ void opndcoll_rfu_t::dispatch_ready_cu() {
 void opndcoll_rfu_t::allocate_cu(unsigned port_num) {
   input_port_t &inp = m_in_ports[port_num];
   for (unsigned i = 0; i < inp.m_in.size(); i++) {
+    unsigned start = 0; // [V3] Modifications
     if ((*inp.m_in[i]).has_ready()) {
       // find a free cu
-      for (unsigned j = 0; j < inp.m_cu_sets.size(); j++) {
+      for (unsigned j = start; j < inp.m_cu_sets.size(); j++) { // [V3] Modifications
         std::vector<collector_unit_t> &cu_set = m_cus[inp.m_cu_sets[j]];
         bool allocated = false;
         unsigned cuLowerBound = 0;
@@ -4477,13 +4662,89 @@ void opndcoll_rfu_t::collector_unit_t::dispatch() {
   for (unsigned i = 0; i < MAX_REG_OPERANDS * 2; i++) m_src_op[i].reset();
 }
 
+// [V3] Modifications 
 void exec_simt_core_cluster::create_shader_core_ctx() {
-  m_core = new shader_core_ctx *[m_config->n_simt_cores_per_cluster];
-  for (unsigned i = 0; i < m_config->n_simt_cores_per_cluster; i++) {
-    unsigned sid = m_config->cid_to_sid(i, m_cluster_id);
-    m_core[i] = new exec_shader_core_ctx(m_gpu, this, sid, m_cluster_id,
-                                         m_config, m_mem_config, m_stats);
-    m_core_sim_order.push_back(i);
+  fprintf(stderr, "\nEntering exec_simt_core_cluster::create_shader_core_ctx\n");
+  // v3 addition
+  if (m_config->is_scalar_core_enabled) { 
+    unsigned total_cores = m_config->n_simt_cores_per_cluster;
+    fprintf(stderr, "total_cores = %d\n", total_cores);
+    unsigned n_simt_cores = (total_cores > 1) ? total_cores / 2 : 1;  // Half SIMT cores
+    unsigned n_scalar_cores = total_cores - n_simt_cores;  // Remaining scalar cores
+
+    // Validate total cores
+    if (total_cores % 2 != 0) {
+        printf("Warning: Total cores (%u) is not even. Adjusting scalar cores.\n", total_cores);
+        n_scalar_cores = total_cores - n_simt_cores;
+    }
+
+    m_core = new shader_core_ctx * [total_cores];
+
+    fprintf(stderr, "n_simt_core = %d\n", n_simt_cores);
+    // Create SIMT cores
+    for (unsigned i = 0; i < n_simt_cores; i++) {
+        unsigned sid = m_config->cid_to_sid(i, m_cluster_id);
+        m_core[i] = new exec_shader_core_ctx(m_gpu, this, sid, m_cluster_id,
+                                            m_config, m_mem_config, m_stats, n_simt_cores);
+        m_core[i]->set_core_type(SIMT_CORE);  // Mark as SIMT core
+        printf("Created SIMT core %u\n", i);
+        m_core_sim_order.push_back(i);
+    }
+
+    // Create scalar cores
+    for (unsigned i = n_simt_cores; i < total_cores; i++) {
+        unsigned sid = m_config->cid_to_sid(i, m_cluster_id);
+
+        shader_core_config *m_scalar_config = new shader_core_config(*m_config);
+        // Scalar Core Configurations
+        m_scalar_config->gpgpu_shader_core_pipeline_opt = "8:1"; //8 warps on scalar core, 1 thread per warp
+        m_scalar_config->warp_size = 1; 
+        m_scalar_config->max_warps_per_shader = 8;
+        m_scalar_config->n_thread_per_shader = 8;  
+        m_scalar_config->gpgpu_registers_per_block = 8192; // 1024 regs per warp?
+        m_scalar_config->max_cta_per_core = 8; // Each warp is a CTA
+        
+        m_core[i] = new exec_shader_core_ctx(m_gpu, this, sid, m_cluster_id,
+                                            m_scalar_config, m_mem_config, m_stats, n_simt_cores);
+        m_core[i]->set_core_type(SCALAR_CORE);  // Mark as scalar core
+
+        printf("Created scalar core %u\n", i);
+        m_core_sim_order.push_back(i);
+    }
+
+    // Create structures between SIMT and scalar cores and connect
+    for (auto &table : divergent_tid_tables) {
+      table.resize(SCALAR_BANDWIDTH); // Divergent TID table has 8 spots for 8 threads on scalar core
+    }
+
+    for (auto &table : ready_tables) {
+      table.resize(m_config->max_warps_per_shader); // Ready table has 64 entries so the warp can index directly into it without any searching
+    }
+    for (unsigned i = 0; i < n_simt_cores; i++) {
+        m_core[i]->set_scalar_que(&get_que(i)); 
+        m_core[i + n_simt_cores]->set_scalar_que(&get_que(i)); //Problem occurs when there is only 1 simt_core per cluster 
+        printf("Connected scalar_que to Core %u and Core %u\n", i, i + n_simt_cores);
+
+        m_core[i]->set_div_tid_table(&get_div_tid_table(i)); 
+        m_core[i + n_simt_cores]->set_div_tid_table(&get_div_tid_table(i));
+        printf("Connected divergent TID table to Core %u and Core %u\n", i, i + n_simt_cores);
+
+        m_core[i]->set_ready_table(&get_ready_table(i)); 
+        m_core[i + n_simt_cores]->set_ready_table(&get_ready_table(i)); 
+        printf("Connected ready table to Core %u and Core %u\n", i, i + n_simt_cores);
+    }
+    fprintf(stderr, "Finished V3 Addition\n");
+  } // end of v3 addition
+  else {
+    m_core = new shader_core_ctx *[m_config->n_simt_cores_per_cluster];
+    printf("Number of shader cores being initialized: %d\n",m_config->n_simt_cores_per_cluster);
+    for (unsigned i = 0; i < m_config->n_simt_cores_per_cluster; i++) {
+        unsigned sid = m_config->cid_to_sid(i, m_cluster_id);
+        m_core[i] = new exec_shader_core_ctx(m_gpu, this, sid, m_cluster_id,
+                                            m_config, m_mem_config, m_stats, 0);
+        m_core[i]->set_core_type(SIMT_CORE);  // Mark as SIMT core
+        m_core_sim_order.push_back(i);
+    }
   }
 }
 
@@ -4500,7 +4761,14 @@ simt_core_cluster::simt_core_cluster(class gpgpu_sim *gpu, unsigned cluster_id,
   m_stats = stats;
   m_memory_stats = mstats;
   m_mem_config = mem_config;
+
+  // Separate structures so can configure number of scalar cores per SIMT core
+  int scalar_num = (m_config->n_simt_cores_per_cluster > 1)? m_config->n_simt_cores_per_cluster / 2 : 1;
+  scalar_ques.resize(scalar_num); 
+  divergent_tid_tables.resize(m_config->n_simt_cores_per_cluster / 2); 
+  ready_tables.resize(m_config->n_simt_cores_per_cluster / 2); 
 }
+// [V3] Modifications END
 
 void simt_core_cluster::core_cycle() {
   for (std::list<unsigned>::iterator it = m_core_sim_order.begin();
@@ -4515,23 +4783,23 @@ void simt_core_cluster::core_cycle() {
 }
 
 void simt_core_cluster::reinit() {
-  for (unsigned i = 0; i < m_config->n_simt_cores_per_cluster; i++)
-    m_core[i]->reinit(0, m_config->n_thread_per_shader, true);
+  for (unsigned i = 0; i < (m_config->n_simt_cores_per_cluster * 2); i++)
+    m_core[i]->reinit(0, m_core[i]->get_config()->n_thread_per_shader, true);
 }
 
 unsigned simt_core_cluster::max_cta(const kernel_info_t &kernel) {
-  return m_config->n_simt_cores_per_cluster * m_config->max_cta(kernel);
+  return (m_config->n_simt_cores_per_cluster * 2) * m_config->max_cta(kernel);
 }
 
 unsigned simt_core_cluster::get_not_completed() const {
   unsigned not_completed = 0;
-  for (unsigned i = 0; i < m_config->n_simt_cores_per_cluster; i++)
+  for (unsigned i = 0; i < (m_config->n_simt_cores_per_cluster * 2); i++)
     not_completed += m_core[i]->get_not_completed();
   return not_completed;
 }
 
 void simt_core_cluster::print_not_completed(FILE *fp) const {
-  for (unsigned i = 0; i < m_config->n_simt_cores_per_cluster; i++) {
+  for (unsigned i = 0; i < (m_config->n_simt_cores_per_cluster * 2); i++) {
     unsigned not_completed = m_core[i]->get_not_completed();
     unsigned sid = m_config->cid_to_sid(i, m_cluster_id);
     fprintf(fp, "%u(%u) ", sid, not_completed);
@@ -4541,31 +4809,31 @@ void simt_core_cluster::print_not_completed(FILE *fp) const {
 float simt_core_cluster::get_current_occupancy(
     unsigned long long &active, unsigned long long &total) const {
   float aggregate = 0.f;
-  for (unsigned i = 0; i < m_config->n_simt_cores_per_cluster; i++) {
+  for (unsigned i = 0; i < (m_config->n_simt_cores_per_cluster * 2); i++) {
     aggregate += m_core[i]->get_current_occupancy(active, total);
   }
-  return aggregate / m_config->n_simt_cores_per_cluster;
+  return aggregate / (m_config->n_simt_cores_per_cluster * 2);
 }
 
 unsigned simt_core_cluster::get_n_active_cta() const {
   unsigned n = 0;
-  for (unsigned i = 0; i < m_config->n_simt_cores_per_cluster; i++)
+  for (unsigned i = 0; i < (m_config->n_simt_cores_per_cluster * 2); i++)
     n += m_core[i]->get_n_active_cta();
   return n;
 }
 
 unsigned simt_core_cluster::get_n_active_sms() const {
   unsigned n = 0;
-  for (unsigned i = 0; i < m_config->n_simt_cores_per_cluster; i++)
+  for (unsigned i = 0; i < (m_config->n_simt_cores_per_cluster * 2); i++)
     n += m_core[i]->isactive();
   return n;
 }
 
 unsigned simt_core_cluster::issue_block2core() {
   unsigned num_blocks_issued = 0;
-  for (unsigned i = 0; i < m_config->n_simt_cores_per_cluster; i++) {
+  for (unsigned i = 0; i < (m_config->n_simt_cores_per_cluster * 2); i++) {
     unsigned core =
-        (i + m_cta_issue_next_core + 1) % m_config->n_simt_cores_per_cluster;
+        (i + m_cta_issue_next_core + 1) % (m_config->n_simt_cores_per_cluster * 2);
 
     kernel_info_t *kernel;
     // Jin: fetch kernel according to concurrent kernel setting
@@ -4601,12 +4869,12 @@ unsigned simt_core_cluster::issue_block2core() {
 }
 
 void simt_core_cluster::cache_flush() {
-  for (unsigned i = 0; i < m_config->n_simt_cores_per_cluster; i++)
+  for (unsigned i = 0; i < (m_config->n_simt_cores_per_cluster * 2); i++)
     m_core[i]->cache_flush();
 }
 
 void simt_core_cluster::cache_invalidate() {
-  for (unsigned i = 0; i < m_config->n_simt_cores_per_cluster; i++)
+  for (unsigned i = 0; i < (m_config->n_simt_cores_per_cluster * 2); i++)
     m_core[i]->cache_invalidate();
 }
 
@@ -4842,7 +5110,7 @@ void simt_core_cluster::display_pipeline(unsigned sid, FILE *fout,
 
 void simt_core_cluster::print_cache_stats(FILE *fp, unsigned &dl1_accesses,
                                           unsigned &dl1_misses) const {
-  for (unsigned i = 0; i < m_config->n_simt_cores_per_cluster; ++i) {
+  for (unsigned i = 0; i < (m_config->n_simt_cores_per_cluster * 2); ++i) {
     m_core[i]->print_cache_stats(fp, dl1_accesses, dl1_misses);
   }
 }
@@ -4851,7 +5119,7 @@ void simt_core_cluster::get_icnt_stats(long &n_simt_to_mem,
                                        long &n_mem_to_simt) const {
   long simt_to_mem = 0;
   long mem_to_simt = 0;
-  for (unsigned i = 0; i < m_config->n_simt_cores_per_cluster; ++i) {
+  for (unsigned i = 0; i < (m_config->n_simt_cores_per_cluster * 2); ++i) {
     m_core[i]->get_icnt_power_stats(simt_to_mem, mem_to_simt);
   }
   n_simt_to_mem = simt_to_mem;
@@ -4859,7 +5127,7 @@ void simt_core_cluster::get_icnt_stats(long &n_simt_to_mem,
 }
 
 void simt_core_cluster::get_cache_stats(cache_stats &cs) const {
-  for (unsigned i = 0; i < m_config->n_simt_cores_per_cluster; ++i) {
+  for (unsigned i = 0; i < (m_config->n_simt_cores_per_cluster * 2); ++i) {
     m_core[i]->get_cache_stats(cs);
   }
 }
@@ -4869,7 +5137,7 @@ void simt_core_cluster::get_L1I_sub_stats(struct cache_sub_stats &css) const {
   struct cache_sub_stats total_css;
   temp_css.clear();
   total_css.clear();
-  for (unsigned i = 0; i < m_config->n_simt_cores_per_cluster; ++i) {
+  for (unsigned i = 0; i < (m_config->n_simt_cores_per_cluster * 2); ++i) {
     m_core[i]->get_L1I_sub_stats(temp_css);
     total_css += temp_css;
   }
@@ -4880,7 +5148,7 @@ void simt_core_cluster::get_L1D_sub_stats(struct cache_sub_stats &css) const {
   struct cache_sub_stats total_css;
   temp_css.clear();
   total_css.clear();
-  for (unsigned i = 0; i < m_config->n_simt_cores_per_cluster; ++i) {
+  for (unsigned i = 0; i < (m_config->n_simt_cores_per_cluster * 2); ++i) {
     m_core[i]->get_L1D_sub_stats(temp_css);
     total_css += temp_css;
   }
@@ -4891,7 +5159,7 @@ void simt_core_cluster::get_L1C_sub_stats(struct cache_sub_stats &css) const {
   struct cache_sub_stats total_css;
   temp_css.clear();
   total_css.clear();
-  for (unsigned i = 0; i < m_config->n_simt_cores_per_cluster; ++i) {
+  for (unsigned i = 0; i < (m_config->n_simt_cores_per_cluster * 2); ++i) {
     m_core[i]->get_L1C_sub_stats(temp_css);
     total_css += temp_css;
   }
@@ -4902,7 +5170,7 @@ void simt_core_cluster::get_L1T_sub_stats(struct cache_sub_stats &css) const {
   struct cache_sub_stats total_css;
   temp_css.clear();
   total_css.clear();
-  for (unsigned i = 0; i < m_config->n_simt_cores_per_cluster; ++i) {
+  for (unsigned i = 0; i < (m_config->n_simt_cores_per_cluster * 2); ++i) {
     m_core[i]->get_L1T_sub_stats(temp_css);
     total_css += temp_css;
   }
@@ -4918,7 +5186,7 @@ void exec_shader_core_ctx::checkExecutionStatusAndUpdate(warp_inst_t &inst,
     unsigned num_addrs;
     num_addrs = translate_local_memaddr(
         inst.get_addr(t), tid,
-        m_config->n_simt_clusters * m_config->n_simt_cores_per_cluster,
+        m_config->n_simt_clusters * (m_config->n_simt_cores_per_cluster * 2),
         inst.data_size, (new_addr_type *)localaddrs);
     inst.set_addr(t, (new_addr_type *)localaddrs, num_addrs);
   }

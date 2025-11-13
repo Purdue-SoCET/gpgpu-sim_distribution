@@ -37,9 +37,15 @@
 
 #include "../abstract_hardware_model.h"
 
+enum scoreboard_type {
+  DEFAULT = 0,
+  FRB = 1,
+  WRB = 2
+}; 
+
 class Scoreboard {
  public:
-  Scoreboard(unsigned sid, unsigned n_warps, class gpgpu_t *gpu);
+  Scoreboard(unsigned sid, unsigned n_warps, class gpgpu_t *gpu, int type);
 
   void reserveRegisters(const warp_inst_t *inst);
   void releaseRegisters(const warp_inst_t *inst);
@@ -49,6 +55,13 @@ class Scoreboard {
   bool pendingWrites(unsigned wid) const;
   void printContents() const;
   const bool islongop(unsigned warp_id, unsigned regnum);
+
+  const std::set<unsigned>& get_regtable(unsigned warp_id) const {
+      return reg_table.at(warp_id);
+  }
+
+  void reset(); 
+
 
  private:
   void reserveRegister(unsigned wid, unsigned regnum);
@@ -63,6 +76,7 @@ class Scoreboard {
   std::vector<std::set<unsigned> > longopregs;
 
   class gpgpu_t *m_gpu;
+  int m_type; 
 };
 
 #endif /* SCOREBOARD_H_ */

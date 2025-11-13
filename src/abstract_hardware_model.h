@@ -45,6 +45,9 @@ class gpgpu_context;
 #define MAX_INPUT_VALUES 24
 #define MAX_OUTPUT_VALUES 8
 
+// [V3] Modifications
+enum CoreType { SIMT_CORE, SCALAR_CORE };
+
 enum _memory_space_t {
   undefined_space = 0,
   reg_space,
@@ -225,14 +228,6 @@ extern std::map<void *, size_t> pinned_memory_size;
 
 class kernel_info_t {
  public:
-  //   kernel_info_t()
-  //   {
-  //      m_valid=false;
-  //      m_kernel_entry=NULL;
-  //      m_uid=0;
-  //      m_num_cores_running=0;
-  //      m_param_mem=NULL;
-  //   }
   kernel_info_t(dim3 gridDim, dim3 blockDim, class function_info *entry,
                 unsigned long long streamID);
   kernel_info_t(
@@ -320,6 +315,14 @@ class kernel_info_t {
     assert(t != m_NameToTextureInfo.end());
     return t->second;
   }
+
+  // [V3] Modifications
+  CoreType m_core_type;
+  CoreType get_core_type() const { return m_core_type; }
+  void set_core_type(CoreType type) {
+      m_core_type = type;
+  }
+  // [V3] Modifications END
 
  private:
   kernel_info_t(const kernel_info_t &);   // disable copy constructor
@@ -1364,6 +1367,7 @@ class core_t {
   unsigned get_reduction_value(unsigned ctaid, unsigned barid) {
     return reduction_storage[ctaid][barid];
   }
+
 
  protected:
   class gpgpu_sim *m_gpu;

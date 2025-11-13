@@ -45,9 +45,12 @@
 #include <set>
 #include <utility>
 #include <vector>
+#include <queue>
+#include <unordered_set>
 
 //#include "../cuda-sim/ptx.tab.h"
 
+#include "ttm.h"
 #include "../abstract_hardware_model.h"
 #include "delayqueue.h"
 #include "dram.h"
@@ -74,13 +77,14 @@
 #define WRITE_MASK_SIZE 8
 
 // V3 Definitions
-#define SAT_LIMIT 10
+#define SAT_LIMIT 30
 #define SCALAR_BANDWIDTH 8
 #define SCALAR_CORE_CAPACITY 16
+#define RECONVERGE_RETURN_PC ((address_type)-2)
+#define NO_BRANCH_DIVERGENCE ((address_type)-1)
 
 class gpgpu_context;
 
-// V3 arch type definitions
 typedef struct scalar_que_entry {
   unsigned m_tid;
   unsigned m_warp_id;
@@ -94,7 +98,6 @@ typedef struct scalar_reg {
   address_type reconv_pc;
   bool dirty;
 } scalar_reg;
-// end of V3 arch type definitions
 
 enum exec_unit_type_t {
   NONE = 0,
@@ -127,6 +130,8 @@ class shd_warp_t {
       : m_shader(shader), m_warp_size(warp_size) {
     m_stores_outstanding = 0;
     m_inst_in_pipeline = 0;
+    sat_counters.resize(warp_size);
+    scalar_regs.resize(SCALAR_BANDWIDTH);
     reset();
   }
   void reset() {
@@ -142,14 +147,6 @@ class shd_warp_t {
     m_last_fetch = 0;
     m_next = 0;
     m_streamID = (unsigned long long)-1;
-
-    // V3 arch support
-    scalar_mask.reset();                          // clear all scalar bits
-    sat_counters.assign(m_warp_size, 0u);         // one counter per thread in the warp
-    scalar_regs.assign(SCALAR_BANDWIDTH, {0,0,0,false}); // allocate scalar register entries
-    reg_cntr = 0;
-    num_scalarizations = 0;
-    elected = false;
 
     // Jin: cdp support
     m_cdp_latency = 0;
@@ -179,7 +176,6 @@ class shd_warp_t {
     m_next_pc = start_pc;
     assert(n_completed >= active.count());
     assert(n_completed <= m_warp_size);
-    assert(sat_counters.size() == m_warp_size); // V3 arch check
     n_completed -= active.count();  // active threads are not yet completed
     m_active_threads = active;
     m_done_exit = false;
@@ -260,6 +256,18 @@ class shd_warp_t {
       m_ibuffer[i].m_valid = false;
     }
   }
+
+  std::unordered_set<address_type> get_conv_points() {
+    for (unsigned i = 0; i < IBUFFER_SIZE; i++) {
+      const warp_inst_t * temp_inst = m_ibuffer[i].m_inst;
+      if (temp_inst == NULL) continue;
+      address_type temp_pc = temp_inst->reconvergence_pc;
+      if (temp_pc != RECONVERGE_RETURN_PC && temp_pc != NO_BRANCH_DIVERGENCE) {
+        m_conv_points.insert(temp_pc);
+      }
+    }
+    return m_conv_points;
+  }
   const warp_inst_t *ibuffer_next_inst() { return m_ibuffer[m_next].m_inst; }
   bool ibuffer_next_valid() { return m_ibuffer[m_next].m_valid; }
   void ibuffer_free() {
@@ -303,28 +311,58 @@ class shd_warp_t {
   unsigned get_dynamic_warp_id() const { return m_dynamic_warp_id; }
   unsigned get_warp_id() const { return m_warp_id; }
 
+  // V3 arch methods
+  unsigned count_active_threads(active_mask_t thread_mask);
+
+  void increment_sat_counters(active_mask_t result_thread_mask);
+
+  std::vector<unsigned> check_sat_counters();
+
+  void clear_counters(unsigned tid); 
+
+  void get_pcs(unsigned *rpc, unsigned *pc);
+
+  bool in_div_region();
+
+  unsigned set_scalar_regs(std::vector<unsigned> scalar_tids); // Sets the threads to be scalarized in the scalar registers if there is space, returns number of registers scalarized
+
+  void cycle_through_scalar_regs(); // Simulates cycle by cycle controller that iterates over scalar registers and pushes to the scalar que
+  // Returns whether a push occured or not
+
+  bool all_on_scalar(active_mask_t simt_mask){
+    return (~scalar_mask & simt_mask).none(); //If simt mask & ~scalar mask is all 0s, that means all threads are on scalar core
+  }
+
+  bool check_at_least_one_on_scalar(shader_core_ctx * m_shader);
+
+  bool all_on_simt(active_mask_t simt_mask){
+    return (scalar_mask & simt_mask).none(); //If simt mask & scalar mask is all 0s, that means all threads are on simt core
+  }
+  
+  active_mask_t get_result_mask(active_mask_t simt_mask){
+    return ~scalar_mask & simt_mask;
+  }
+
+  active_mask_t get_scalar_mask() {
+    return scalar_mask;
+  }
+
+  bool get_elected_status(){return elected;}
+
+  void set_elected_status(bool in){elected = in;}
+
+  scalar_que_entry get_elected_thread(){return elected_thread;}
+  
+  void set_elected_thread(scalar_que_entry entry){elected_thread = entry;}
+
+
   class shader_core_ctx *get_shader() {
     return m_shader;
   }
 
-  // V3 arch functions
-  bool in_div_region();
-  unsigned count_active_threads(active_mask_t thread_mask);
-  void increment_sat_counters(active_mask_t result_thread_mask);
-  std::vector<unsigned> check_sat_counters();
-  void get_pcs(unsigned *rpc, unsigned *pc);
-  void set_scalar_regs(std::vector<unsigned> scalar_tids); // Sets the threads to be scalarized in the scalar registers if there is space, returns number of registers scalarized
-  void cycle_through_scalar_regs(); // Simulates cycle by cycle controller that iterates over scalar registers and pushes to the scalar que
-  bool all_on_scalar(active_mask_t simt_mask) { return (~scalar_mask & simt_mask).none(); } //If simt mask & ~scalar mask is all 0s, that means all threads are on scalar core
-  bool all_on_simt(active_mask_t simt_mask) { return (scalar_mask & simt_mask).none(); } //If simt mask & scalar mask is all 0s, that means all threads are on simt core
-  bool at_least_one_on_scalar(active_mask_t simt_mask) { return (scalar_mask & simt_mask).any(); }
-  active_mask_t get_result_mask(active_mask_t simt_mask) { return ~scalar_mask & simt_mask; }
-  active_mask_t get_scalar_mask() { return scalar_mask; }
-  bool get_elected_status() { return elected; }
-  void set_elected_status(bool in) { elected = in; }
-  scalar_que_entry get_elected_thread() { return elected_thread; }
-  void set_elected_thread(scalar_que_entry entry) { elected_thread = entry; }
-  ~shd_warp_t() { fprintf(stdout, "Scalarized %d threads on warp %d\n",num_scalarizations,m_warp_id); }
+  ~shd_warp_t(){
+    fprintf(stdout, "Scalarized %d threads on warp %d\n",num_scalarizations,m_warp_id);
+  }
 
  private:
   static const unsigned IBUFFER_SIZE = 2;
@@ -336,6 +374,7 @@ class shd_warp_t {
   unsigned m_dynamic_warp_id;
 
   address_type m_next_pc;
+  std::unordered_set<address_type> m_conv_points;
   unsigned n_completed;  // number of threads in warp completed
   std::bitset<MAX_WARP_SIZE> m_active_threads;
 
@@ -371,7 +410,9 @@ class shd_warp_t {
   std::vector<unsigned> sat_counters;
   std::vector<scalar_reg> scalar_regs;
   unsigned reg_cntr;
+
   unsigned num_scalarizations;
+
   bool elected;
   scalar_que_entry elected_thread;
 
@@ -1548,7 +1589,9 @@ enum pipeline_stage_name_t {
   EX_WB,
   ID_OC_TENSOR_CORE,
   OC_EX_TENSOR_CORE,
-  N_PIPELINE_STAGES
+  N_PIPELINE_STAGES,
+  ID_OC_REROUTE,
+  OC_OUT_REROUTE
 };
 
 const char *const pipeline_stage_name_decode[] = {
@@ -1573,6 +1616,7 @@ class shader_core_config : public core_config {
     pipeline_widths_string = NULL;
     gpgpu_ctx = ctx;
   }
+
 
   void init() {
     int ntok = sscanf(gpgpu_shader_core_pipeline_opt, "%d:%d",
@@ -1769,6 +1813,10 @@ class shader_core_config : public core_config {
   bool perfect_inst_const_cache;
   unsigned inst_fetch_throughput;
   unsigned reg_file_port_throughput;
+
+  // v3 addition
+  bool is_scalar_core_enabled = true; 
+  // end of v3 addition
 
   // specialized unit config strings
   char *specialized_unit_string[SPECIALIZED_UNIT_NUM];
@@ -2122,12 +2170,16 @@ class shader_core_ctx : public core_t {
                   const shader_core_config *config,
                   const memory_config *mem_config, shader_core_stats *stats);
 
+  CoreType get_core_type() const { return m_core_type; }
+  void set_core_type(CoreType type) {
+      m_core_type = type;
+  }
   // used by simt_core_cluster:
   // modifiers
   void cycle();
   void reinit(unsigned start_thread, unsigned end_thread,
               bool reset_not_completed);
-  void issue_block2core(class kernel_info_t &kernel);
+  void issue_block2core(class kernel_info_t &kernel, unsigned wid = (unsigned) -1);
 
   void cache_flush();
   void cache_invalidate();
@@ -2183,13 +2235,38 @@ class shader_core_ctx : public core_t {
   void set_max_cta(const kernel_info_t &kernel);
   void warp_inst_complete(const warp_inst_t &inst);
 
+
   // V3 Arch methods 
   void display_scalar_que();
+
   void rr_top_level_scheduler();
+
   bool push_scalar_que(scalar_que_entry entry);
-  unsigned get_scalar_que_ocp() { return scalar_que.size(); }
-  bool is_scalar_que_empty() { return (bool)get_scalar_que_ocp(); }
+  
+  unsigned get_scalar_que_ocp(){
+    return scalar_que->size();
+  }
+
+  bool is_scalar_que_empty(){
+    return (bool) get_scalar_que_ocp();
+  }
+
   scalar_que_entry pop_scalar_que();
+
+  void set_scalar_que(std::deque<scalar_que_entry> *sq) {
+    // fprintf(stderr, "Entering set_scalar_que\n");
+    scalar_que = sq;
+  }
+
+  void set_div_tid_table(divergent_tid_table *tb) {
+    div_tid_table = tb; 
+  }
+
+  void set_ready_table(ready_table *tb) {
+    rdy_table = tb; 
+  }
+
+  void squash_fetch(unsigned warp_id); 
 
   // accessors
   std::list<unsigned> get_regs_written(const inst_t &fvt) const;
@@ -2208,6 +2285,9 @@ class shader_core_ctx : public core_t {
   // debug:
   void display_simt_state(FILE *fout, int mask) const;
   void display_pipeline(FILE *fout, int print_mem, int mask3bit) const;
+
+  void display_operand_collector(FILE *fout) const; 
+
 
   void incload_stat() { m_stats->m_num_loadqueued_insn[m_sid]++; }
   void incstore_stat() { m_stats->m_num_storequeued_insn[m_sid]++; }
@@ -2501,7 +2581,7 @@ class shader_core_ctx : public core_t {
 
   int test_res_bus(int latency);
   address_type next_pc(int tid) const;
-  void fetch();
+  virtual void fetch(int i);
   void register_cta_thread_exit(unsigned cta_num, kernel_info_t *kernel);
 
   void decode();
@@ -2515,11 +2595,12 @@ class shader_core_ctx : public core_t {
                           unsigned sch_id);
 
   void create_front_pipeline();
-  void create_schedulers();
+  virtual void create_schedulers();
   void create_exec_pipeline();
 
   // pure virtual methods implemented based on the current execution mode
   // (execution-driven vs trace-driven)
+
   virtual void init_warps(unsigned cta_id, unsigned start_thread,
                           unsigned end_thread, unsigned ctaid, int cta_size,
                           kernel_info_t &kernel);
@@ -2549,10 +2630,14 @@ class shader_core_ctx : public core_t {
                                    new_addr_type *translated_addrs);
 
   void read_operands();
+  
+  //V3 Addition
+  
+  //
 
   void execute();
 
-  void writeback();
+  virtual void writeback();
 
   // used in display_pipeline():
   void dump_warp_state(FILE *fout) const;
@@ -2561,9 +2646,15 @@ class shader_core_ctx : public core_t {
   unsigned long long m_last_inst_gpu_sim_cycle;
   unsigned long long m_last_inst_gpu_tot_sim_cycle;
 
-  // V3 arch support
+  // V3 arch structure
+
   unsigned warp_cntr;
-  std::deque<scalar_que_entry> scalar_que;
+  std::deque<scalar_que_entry> *scalar_que;
+  divergent_tid_table *div_tid_table;
+  ready_table *rdy_table; // NOTE: rdy_table is the pointer, ready_table is the type!
+
+  std::bitset<SCALAR_BANDWIDTH> reconverge_start; 
+  std::bitset<SCALAR_BANDWIDTH> reconverge_done; 
 
   // general information
   unsigned m_sid;  // shader id
@@ -2639,12 +2730,36 @@ class shader_core_ctx : public core_t {
   int find_available_hwtid(unsigned int cta_size, bool occupy);
 
  private:
+  CoreType m_core_type;
   unsigned int m_occupied_n_threads;
   unsigned int m_occupied_shmem;
   unsigned int m_occupied_regs;
   unsigned int m_occupied_ctas;
   std::bitset<MAX_THREAD_PER_SM> m_occupied_hwtid;
   std::map<unsigned int, unsigned int> m_occupied_cta_to_hwtid;
+
+
+  // v3 addition
+  public:
+    bool steal;
+    simt_core_cluster * get_cluster() {return m_cluster;} 
+    std::array<bool, SCALAR_BANDWIDTH> reconverge = {};
+    return_fsm_states curr_state[SCALAR_BANDWIDTH];
+    return_fsm_states next_state[SCALAR_BANDWIDTH];
+    // warp_inst_t wrb_entries[SCALAR_BANDWIDTH]; 
+    
+  protected:
+    Scoreboard *m_fetched_register_board;
+    Scoreboard *m_written_register_board; 
+    // std::array<std::queue<warp_inst_t>, SCALAR_BANDWIDTH> m_written_register_boards; 
+
+    void return_fsm_cycle();
+    void return_fsm_update(int warp_id); 
+    void reset_transfer_structures(); 
+
+    std::array<typename std::set<unsigned>::const_iterator, SCALAR_BANDWIDTH> wrb_its; 
+  // end of v3 addition
+
 };
 
 class exec_shader_core_ctx : public shader_core_ctx {
@@ -2653,13 +2768,24 @@ class exec_shader_core_ctx : public shader_core_ctx {
                        unsigned shader_id, unsigned tpc_id,
                        const shader_core_config *config,
                        const memory_config *mem_config,
-                       shader_core_stats *stats)
+                       shader_core_stats *stats, unsigned n_simt_cores)
       : shader_core_ctx(gpu, cluster, shader_id, tpc_id, config, mem_config,
                         stats) {
+    if (shader_id < n_simt_cores) {
+        printf("SIMT_CORE with shader_id=%d\n", shader_id);
+        set_core_type(SIMT_CORE);
+    } else {
+        printf("SCALAR_CORE with shader_id=%d\n", shader_id);
+        set_core_type(SCALAR_CORE);
+    }
+
     create_front_pipeline();
     create_shd_warp();
     create_schedulers();
+    // fprintf(stdout, "Number of Warps per shader core: %d\n", schedulers[0]->m_supervised_warps.size());
     create_exec_pipeline();
+
+
   }
 
   virtual void checkExecutionStatusAndUpdate(warp_inst_t &inst, unsigned t,
@@ -2729,6 +2855,10 @@ class simt_core_cluster {
                               unsigned long long &total) const;
   virtual void create_shader_core_ctx() = 0;
 
+  shader_core_ctx **get_core() {
+    return m_core; 
+  }
+
  protected:
   unsigned m_cluster_id;
   gpgpu_sim *m_gpu;
@@ -2741,6 +2871,30 @@ class simt_core_cluster {
   unsigned m_cta_issue_next_core;
   std::list<unsigned> m_core_sim_order;
   std::list<mem_fetch *> m_response_fifo;
+  // std::vector<std::deque<scalar_que_entry>> scalar_ques;
+  // std::vector<divergent_tid_table> divergent_tid_tables; 
+  
+  std::vector<ready_table> ready_tables; 
+
+  public:
+    // REMOVE LATER
+    bool test; 
+
+    std::vector<std::deque<scalar_que_entry>> scalar_ques;
+    std::vector<divergent_tid_table> divergent_tid_tables; 
+
+    std::deque<scalar_que_entry>& get_que(unsigned core_id) {
+      // fprintf(stderr, "core_id = %d\n", core_id);
+      return scalar_ques.at(core_id);
+    }
+
+    divergent_tid_table& get_div_tid_table(unsigned core_id) {
+      return divergent_tid_tables.at(core_id); 
+    }
+
+    ready_table& get_ready_table(unsigned core_id) {
+      return ready_tables.at(core_id); 
+    }
 };
 
 class exec_simt_core_cluster : public simt_core_cluster {

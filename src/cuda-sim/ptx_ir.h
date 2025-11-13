@@ -1251,6 +1251,7 @@ class param_info {
 class function_info {
  public:
   function_info(int entry_point, gpgpu_context *ctx);
+
   const ptx_version &get_ptx_version() const {
     return m_symtab->get_ptx_version();
   }
@@ -1332,12 +1333,22 @@ class function_info {
   }
   bool has_return() const { return m_return_var_sym != NULL; }
   const symbol *get_return_var() const { return m_return_var_sym; }
-  const ptx_instruction *get_instruction(unsigned PC) const {
-    unsigned index = PC - m_start_PC;
+  const ptx_instruction *get_instruction(unsigned PC, int warp_size) const {
+    // Scalar core shouldn't do index offset
+    unsigned index = PC;
+    // if (core_type == SIMT_CORE) { // core_type isn't getting passed properly for some reason
+    
+    // printf("index is %x and start pc is %x and warp size is %d\n", index, m_start_PC, warp_size); 
+    // print_insn(index, stdout); 
+    if (warp_size != 1) { 
+      index -= m_start_PC; 
+    } 
+
     if (index < m_instr_mem_size) return m_instr_mem[index];
     return NULL;
   }
   addr_t get_start_PC() const { return m_start_PC; }
+  void set_start_PC(addr_t pc) { m_start_PC = pc;  }
 
   void finalize(memory_space *param_mem);
   void param_to_shared(memory_space *shared_mem, symbol_table *symtab);

@@ -62,3 +62,10 @@ accel-sim-framework/
 gpu-app-collection/
 
 setup
+
+_cuobjdump_*
+_app_cuda_version_*
+*.tmp
+*.out
+out*.txt
+out.txt
