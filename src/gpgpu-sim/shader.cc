@@ -1052,9 +1052,8 @@ void shader_core_ctx::issue_warp(register_set &pipe_reg_set,
   }
 
   warp->set_scalar_regs(scalarized_tids); // Fill any available registers in one cycle with the info that the scalar core would need
-  warp->cycle_through_scalar_regs(); // Controller cycles through registers every cycle and pushes to scalar que || DOES NOT CYCLE THROUGH ALL REGISTERS, ONLY ONE!
-  
-  rr_top_level_scheduler();
+  // warp->cycle_through_scalar_regs(); // Controller cycles through registers every cycle and pushes to scalar que || DOES NOT CYCLE THROUGH ALL REGISTERS, ONLY ONE!
+
   // End of V3
 
   warp_inst_t **pipe_reg =
@@ -1148,6 +1147,7 @@ void shader_core_ctx::issue_warp(register_set &pipe_reg_set,
 void shader_core_ctx::issue() {
   // Ensure fair round robin issu between schedulers
   unsigned j;
+
   for (unsigned i = 0; i < schedulers.size(); i++) {
     j = (Issue_Prio + i) % schedulers.size();
     schedulers[j]->cycle();
@@ -3690,12 +3690,17 @@ void shader_core_config::set_pipeline_latency() {
 }
 
 void shader_core_ctx::cycle() {
+  fprintf(stdout, "shader_core_ctx::cycle()\n");
   if (!isactive() && get_not_completed() == 0) return;
 
   m_stats->shader_cycles[m_sid]++;
   writeback();
   execute();
   read_operands();
+  for (unsigned warp_id = 0; warp_id < m_config->max_warps_per_shader; ++warp_id) {
+    m_warp[warp_id]->cycle_through_scalar_regs();
+  }
+  rr_top_level_scheduler();
   issue();
   for (unsigned int i = 0; i < m_config->inst_fetch_throughput; ++i) {
     decode();

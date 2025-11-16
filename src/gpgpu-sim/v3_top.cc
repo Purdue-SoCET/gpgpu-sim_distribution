@@ -81,7 +81,7 @@ std::vector<unsigned> shd_warp_t::check_sat_counters() {
     if (sat_counters[i] >= SAT_LIMIT && !scalar_mask[i]) {
       scalar_tids.push_back(i);
       fprintf(stdout, "Thread %u in warp %u has saturated counter %u --> ready for scalarization\n", i, m_warp_id, sat_counters[i]);
-      if (scalar_tids.size() >= SCALAR_BANDWIDTH) break; // cap at bandwidth
+      // if (scalar_tids.size() >= SCALAR_BANDWIDTH) break; // cap at bandwidth
     }
   }
 
@@ -92,7 +92,7 @@ void shd_warp_t::set_scalar_regs(std::vector<unsigned> scalar_tids) {
   unsigned rpc, pc;
   get_pcs(&rpc, &pc);
   
-  for(int i = 0; i < scalar_regs.size(); i++){
+  for(int i = 0; i < scalar_regs.size(); i++){  // Assuming scalar_regs.size() == B (BANDWIDTH_OF_TRANSFER_MECHANISM, as stated in paper)
     scalar_reg reg = scalar_regs[i];
 
     if(!(reg.dirty)) { // If the register is not already occupied
@@ -113,14 +113,13 @@ void shd_warp_t::set_scalar_regs(std::vector<unsigned> scalar_tids) {
       scalar_regs[i] = reg;
 
       num_scalarizations++;
-      // fprintf(stdout,"Register %d on warp %d has dirty bit %d\n",i,m_warp_id,reg.dirty);
+      fprintf(stdout,"Register %d on warp %d has dirty bit %d\n",i,m_warp_id,reg.dirty);
     }
   }
 }
 
 void shd_warp_t::cycle_through_scalar_regs() {
-  scalar_reg reg = scalar_regs[reg_cntr];
-  fprintf(stdout,"Cycling through scalar register %d on warp %d\n",reg_cntr,m_warp_id);
+  // fprintf(stdout,"Cycling through scalar register %d on warp %d\n",reg_cntr,m_warp_id);
   // fprintf(stdout,"Reg counter value %d\n",reg_cntr);
   // fprintf(stdout,"Scalar Register State for Warp %d\n",m_warp_id);
   // fprintf(stdout,"Thread ID | Start PC | Reconvergence PC | Dirty\n");
@@ -130,32 +129,39 @@ void shd_warp_t::cycle_through_scalar_regs() {
   //   fprintf(stdout,"%d        | %x       | %x               | %d\n",que_entry.m_tid,que_entry.start_pc,que_entry.reconv_pc,que_entry.dirty);
   // }
 
-  if(!get_elected_status()) { // If thread has not yet been elected for scalarization, elect it in the following block --> used by RR scheduler (rr_top_level_scheduler)
-    if(reg.dirty) { // If register is occupied (has valid thread context)
+  // bool found_eligible_thread = false;  // Flag to stop cycling through registers once an eligible thread is found
 
-      // Setting up scalar que entry
-      scalar_que_entry entry;
-      entry.m_tid = reg.m_tid;
-      entry.m_warp_id = m_warp_id;
-      entry.start_pc = reg.start_pc;
-      entry.reconv_pc = reg.reconv_pc;
+  if (!get_elected_status()) { // If thread has not yet been elected for scalarization, elect it in the following block --> used by RR scheduler (rr_top_level_scheduler)
+    // for (int i = 0; i < SCALAR_BANDWIDTH; i++) {  // MODIFICATION: check all scalar registers in one cycle
+      scalar_reg reg = scalar_regs[reg_cntr];
+      if (reg.dirty) { // If register is occupied (has valid thread context)
+        // found_eligible_thread = true;  // Stop cycling through registers as soon as eligible thread is found
 
-      set_elected_status(true); // Now the RR scheduler knows that this thread is ready to be scalarized
-      set_elected_thread(entry);
-      fprintf(stdout,"Elected thread %d in warp %d to be scalarized\n",reg.m_tid,m_warp_id);
+        // Setting up scalar que entry
+        scalar_que_entry entry;
+        entry.m_tid = reg.m_tid;
+        entry.m_warp_id = m_warp_id;
+        entry.start_pc = reg.start_pc;
+        entry.reconv_pc = reg.reconv_pc;
 
-      reg.dirty = 0;  // Mark register as free after pushing to scalar que
-      scalar_regs[reg_cntr] = reg;
-      // m_shader->display_scalar_que();
-    }
-    if (reg_cntr == SCALAR_BANDWIDTH-1) {
-      reg_cntr = 0;
-    }
-    else {
-      reg_cntr++;
+        set_elected_status(true); // Now the RR scheduler knows that this thread is ready to be scalarized
+        set_elected_thread(entry);
+        fprintf(stdout,"Elected thread %d in warp %d to be scalarized\n",reg.m_tid,m_warp_id);
+
+        reg.dirty = 0;  // Mark register as free after pushing to scalar que
+        scalar_regs[reg_cntr] = reg;
+        // m_shader->display_scalar_que();
+      }
+      if (reg_cntr == SCALAR_BANDWIDTH-1) {
+        reg_cntr = 0;
+      }
+      else {
+        reg_cntr++;
+      }
+      // if (found_eligible_thread) break;
     }
   }
-}
+// }
 
 void shader_core_ctx::rr_top_level_scheduler() {
   shd_warp_t * warp = m_warp[warp_cntr];
@@ -165,7 +171,7 @@ void shader_core_ctx::rr_top_level_scheduler() {
     bool pushed = push_scalar_que(warp->get_elected_thread());
     
     if (pushed) {
-      fprintf(stdout,"Scalarized thread %d in warp %d\n",warp->get_elected_thread().m_tid, warp->get_elected_thread().m_warp_id);
+      // fprintf(stdout,"Scalarized thread %d in warp %d\n",warp->get_elected_thread().m_tid, warp->get_elected_thread().m_warp_id);
       warp->set_elected_status(false);
       display_scalar_que();
     }
