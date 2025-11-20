@@ -185,3 +185,13 @@ void shader_core_ctx::rr_top_level_scheduler() {
     warp_cntr++;
   }
 }
+
+void shader_core_ctx::mark_scalar_thread_complete(unsigned warp_id, unsigned tid) {
+  // V3: Called when a thread executing on scalar core completes and is ready to rejoin SIMT execution
+  // This removes the thread from scalar_mask so it can execute on SIMT core again
+  if (warp_id < m_config->max_warps_per_shader) {
+    shd_warp_t* warp = m_warp[warp_id];
+    warp->mark_thread_scalar_done(tid);
+    fprintf(stdout, "Thread %u in warp %u completed scalar core execution and returning to SIMT\n", tid, warp_id);
+  }
+}

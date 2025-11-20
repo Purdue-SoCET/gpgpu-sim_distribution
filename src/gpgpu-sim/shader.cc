@@ -1052,6 +1052,14 @@ void shader_core_ctx::issue_warp(register_set &pipe_reg_set,
   }
 
   warp->set_scalar_regs(scalarized_tids); // Fill any available registers in one cycle with the info that the scalar core would need
+  
+  // V3: Store reconvergence PC if threads were scalarized
+  if (!scalarized_tids.empty()) {
+    unsigned pc, rpc;
+    warp->get_pcs(&rpc, &pc);
+    warp->set_scalar_core_reconv_pc(rpc);
+    fprintf(stdout, "Stored RPC 0x%x for warp %u (threads on scalar core will stall at RPC)\n", rpc, warp_id);
+  }
   // warp->cycle_through_scalar_regs(); // Controller cycles through registers every cycle and pushes to scalar que || DOES NOT CYCLE THROUGH ALL REGISTERS, ONLY ONE!
 
   // End of V3
@@ -1063,8 +1071,9 @@ void shader_core_ctx::issue_warp(register_set &pipe_reg_set,
   m_warp[warp_id]->ibuffer_free();
   assert(next_inst->valid());
   **pipe_reg = *next_inst;  // static instruction information
+  // V3: Use result_mask (threads on SIMT) instead of active_mask to exclude scalarized threads from SIMT execution
   (*pipe_reg)->issue(
-      active_mask, warp_id, m_gpu->gpu_tot_sim_cycle + m_gpu->gpu_sim_cycle,
+      result_mask, warp_id, m_gpu->gpu_tot_sim_cycle + m_gpu->gpu_sim_cycle,
       m_warp[warp_id]->get_dynamic_warp_id(), sch_id,
       m_warp[warp_id]->get_streamID());  // dynamic instruction information
   m_stats->shader_cycle_distro[2 + (*pipe_reg)->active_count()]++;
@@ -4133,6 +4142,10 @@ bool shd_warp_t::waiting() {
     // the wrong register to be read.
     return true;
   } else if (m_waiting_ldgsts) {  // Waiting for LDGSTS to finish
+    return true;
+  } else if (has_threads_on_scalar_core() && (m_next_pc == m_scalar_core_reconv_pc)) {
+    // V3: Warp is stalled at reconvergence PC waiting for threads to return from scalar core
+    // This ensures all threads synchronize at the RPC before continuing execution
     return true;
   }
   return false;

@@ -324,6 +324,10 @@ class shd_warp_t {
   void set_elected_status(bool in) { elected = in; }
   scalar_que_entry get_elected_thread() { return elected_thread; }
   void set_elected_thread(scalar_que_entry entry) { elected_thread = entry; }
+  bool has_threads_on_scalar_core() { return scalar_mask.any(); } // Returns true if any threads from this warp are on scalar core
+  void mark_thread_scalar_done(unsigned tid) { scalar_mask[tid] = 0; } // Mark thread as done on scalar core and return to SIMT
+  address_type get_scalar_core_reconv_pc() { return m_scalar_core_reconv_pc; } // Get reconvergence PC for scalar threads
+  void set_scalar_core_reconv_pc(address_type rpc) { m_scalar_core_reconv_pc = rpc; } // Set reconvergence PC for scalar threads
   ~shd_warp_t() { fprintf(stdout, "Scalarized %d threads on warp %d\n",num_scalarizations,m_warp_id); }
 
  private:
@@ -374,6 +378,7 @@ class shd_warp_t {
   unsigned num_scalarizations;
   bool elected;
   scalar_que_entry elected_thread;
+  address_type m_scalar_core_reconv_pc; // Reconvergence PC for threads executing on scalar core
 
   // Jin: cdp support
  public:
@@ -2186,6 +2191,7 @@ class shader_core_ctx : public core_t {
   // V3 Arch methods 
   void display_scalar_que();
   void rr_top_level_scheduler();
+  void mark_scalar_thread_complete(unsigned warp_id, unsigned tid); // Mark thread as complete on scalar core (returns to SIMT)
   bool push_scalar_que(scalar_que_entry entry);
   unsigned get_scalar_que_ocp() { return scalar_que.size(); }
   bool is_scalar_que_empty() { return (bool)get_scalar_que_ocp(); }
