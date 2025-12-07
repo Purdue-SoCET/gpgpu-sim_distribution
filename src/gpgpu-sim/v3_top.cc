@@ -119,18 +119,6 @@ void shd_warp_t::set_scalar_regs(std::vector<unsigned> scalar_tids) {
 }
 
 void shd_warp_t::cycle_through_scalar_regs() {
-  // fprintf(stdout,"Cycling through scalar register %d on warp %d\n",reg_cntr,m_warp_id);
-  // fprintf(stdout,"Reg counter value %d\n",reg_cntr);
-  // fprintf(stdout,"Scalar Register State for Warp %d\n",m_warp_id);
-  // fprintf(stdout,"Thread ID | Start PC | Reconvergence PC | Dirty\n");
-
-  // for(int i=SCALAR_BANDWIDTH-1; i>=0; i--){
-  //   scalar_reg que_entry = scalar_regs[i];
-  //   fprintf(stdout,"%d        | %x       | %x               | %d\n",que_entry.m_tid,que_entry.start_pc,que_entry.reconv_pc,que_entry.dirty);
-  // }
-
-  // bool found_eligible_thread = false;  // Flag to stop cycling through registers once an eligible thread is found
-
   if (!get_elected_status()) { // If thread has not yet been elected for scalarization, elect it in the following block --> used by RR scheduler (rr_top_level_scheduler)
     // for (int i = 0; i < SCALAR_BANDWIDTH; i++) {  // MODIFICATION: check all scalar registers in one cycle
       scalar_reg reg = scalar_regs[reg_cntr];
@@ -161,7 +149,6 @@ void shd_warp_t::cycle_through_scalar_regs() {
       // if (found_eligible_thread) break;
     }
   }
-// }
 
 void shader_core_ctx::rr_top_level_scheduler() {
   shd_warp_t * warp = m_warp[warp_cntr];

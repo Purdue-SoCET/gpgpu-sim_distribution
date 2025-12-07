@@ -1037,7 +1037,7 @@ void shader_core_ctx::issue_warp(register_set &pipe_reg_set,
                                  const warp_inst_t *next_inst,
                                  const active_mask_t &active_mask,
                                  unsigned warp_id, unsigned sch_id) {
-  // V3 modification
+  // BEGIN V3 modification
 
   // Get the active mask of the warp as well as number of threads running on warp
   shd_warp_t * warp = m_warp[warp_id];
@@ -1060,9 +1060,6 @@ void shader_core_ctx::issue_warp(register_set &pipe_reg_set,
     warp->set_scalar_core_reconv_pc(rpc);
     fprintf(stdout, "Stored RPC 0x%x for warp %u (threads on scalar core will stall at RPC)\n", rpc, warp_id);
   }
-  // warp->cycle_through_scalar_regs(); // Controller cycles through registers every cycle and pushes to scalar que || DOES NOT CYCLE THROUGH ALL REGISTERS, ONLY ONE!
-
-  // End of V3
 
   warp_inst_t **pipe_reg =
       pipe_reg_set.get_free(m_config->sub_core_model, sch_id);
@@ -1071,13 +1068,18 @@ void shader_core_ctx::issue_warp(register_set &pipe_reg_set,
   m_warp[warp_id]->ibuffer_free();
   assert(next_inst->valid());
   **pipe_reg = *next_inst;  // static instruction information
-  // V3: Use result_mask (threads on SIMT) instead of active_mask to exclude scalarized threads from SIMT execution
+
+  // IMPORTANT: V3: Use result_mask (threads on SIMT) instead of active_mask to exclude scalarized threads from SIMT execution
   (*pipe_reg)->issue(
       result_mask, warp_id, m_gpu->gpu_tot_sim_cycle + m_gpu->gpu_sim_cycle,
       m_warp[warp_id]->get_dynamic_warp_id(), sch_id,
       m_warp[warp_id]->get_streamID());  // dynamic instruction information
   m_stats->shader_cycle_distro[2 + (*pipe_reg)->active_count()]++;
   func_exec_inst(**pipe_reg);
+
+  // END OF V3 modification
+
+
 
   // Add LDGSTS instructions into a buffer
   unsigned int ldgdepbar_id = m_warp[warp_id]->m_ldgdepbar_id;
